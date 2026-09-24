@@ -27,6 +27,15 @@ export function App() {
   if (isShareView()) {
     return <SharePage />;
   }
+
+  // 僅在實體互動展演主站鎖定滾動與手勢
+  useEffect(() => {
+    document.body.classList.add('kiosk-locked');
+    return () => {
+      document.body.classList.remove('kiosk-locked');
+    };
+  }, []);
+
   const [theme, setTheme] = useState<ThemeConfig>(defaultThemeConfig);
   const [fsmState, setFsmState] = useState<FsmState>('IDLE');
   const [stats, setStats] = useState<KineticStats>({

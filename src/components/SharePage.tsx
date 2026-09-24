@@ -89,6 +89,21 @@ export const SharePage: React.FC = () => {
     });
   }, []);
 
+  // 確保行動端瀏覽器解除任何 kiosk 滾動與手勢限制
+  useEffect(() => {
+    document.body.classList.remove('kiosk-locked');
+    document.documentElement.style.overflow = 'auto';
+    document.documentElement.style.touchAction = 'pan-y';
+    document.body.style.overflow = 'auto';
+    document.body.style.touchAction = 'pan-y';
+    return () => {
+      document.documentElement.style.overflow = '';
+      document.documentElement.style.touchAction = '';
+      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
+    };
+  }, []);
+
   // 在前端 Canvas 合成專屬 9:16 行動端證書圖 (含相片或能量勳章)
   const renderMobilePoster = useCallback(async () => {
     const canvas = canvasRef.current;
@@ -357,7 +372,7 @@ export const SharePage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#0A0A0A] text-white font-mono flex flex-col items-center justify-start p-4 sm:p-6 overflow-y-auto select-none">
+    <div className="min-h-screen w-full bg-[#0A0A0A] text-white font-mono flex flex-col items-center justify-start p-4 sm:p-6 pb-28 overflow-y-auto touch-pan-y overscroll-y-contain">
       {/* 隱藏 Canvas 供海報合成 */}
       <canvas ref={canvasRef} className="hidden" />
 
