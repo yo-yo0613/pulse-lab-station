@@ -33,6 +33,11 @@ export const defaultThemeConfig: ThemeConfig = {
     qrMode: 'share_url',        // 'share_url' (手機掃碼打開 Vercel 成果展示網頁) | 'offline_text' (純文字) | 'custom_url'
     customUrl: 'http://192.168.1.100:5173/gallery',
   },
+  cloudinary: {
+    enabled: true,
+    cloudName: 'dt1ridsu5',
+    uploadPreset: 'sister_preset',
+  },
   sound: {
     mode: 'synth',              // 'synth' (原生 Web Audio API 合成) | 'custom' (讀取外置音檔)
     masterVolume: 0.85,

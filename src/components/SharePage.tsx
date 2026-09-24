@@ -19,6 +19,30 @@ interface ShareParams {
   peak: number;
   bursts: number;
   timestamp: string;
+  imageUrl?: string;
+}
+
+function getCoverCrop(
+  sourceW: number,
+  sourceH: number,
+  targetW: number,
+  targetH: number
+): { sx: number; sy: number; sw: number; sh: number } {
+  const sourceRatio = sourceW / sourceH;
+  const targetRatio = targetW / targetH;
+  let sx = 0,
+    sy = 0,
+    sw = sourceW,
+    sh = sourceH;
+
+  if (sourceRatio > targetRatio) {
+    sw = sourceH * targetRatio;
+    sx = (sourceW - sw) / 2;
+  } else {
+    sh = sourceW / targetRatio;
+    sy = (sourceH - sh) / 2;
+  }
+  return { sx, sy, sw, sh };
 }
 
 export const SharePage: React.FC = () => {
@@ -52,6 +76,7 @@ export const SharePage: React.FC = () => {
     const peakParam = query.get('peak');
     const burstsParam = query.get('bursts');
     const tsParam = query.get('ts');
+    const imgParam = query.get('img');
 
     setParams({
       score: scoreParam ? parseInt(scoreParam, 10) : 30708,
@@ -60,17 +85,22 @@ export const SharePage: React.FC = () => {
       peak: peakParam ? parseInt(peakParam, 10) : 100,
       bursts: burstsParam ? parseInt(burstsParam, 10) : 52,
       timestamp: tsParam ? decodeURIComponent(tsParam) : new Date().toLocaleDateString('zh-TW'),
+      imageUrl: imgParam ? decodeURIComponent(imgParam) : undefined,
     });
   }, []);
 
-  // 在前端 Canvas 合成專屬 9:16 行動端證書圖
-  const renderMobilePoster = useCallback(() => {
+  // 在前端 Canvas 合成專屬 9:16 行動端證書圖 (含相片或能量勳章)
+  const renderMobilePoster = useCallback(async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     setGeneratingPoster(true);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    if (typeof document !== 'undefined' && document.fonts) {
+      await document.fonts.ready;
+    }
 
     const W = 1080;
     const H = 1920;
@@ -118,71 +148,162 @@ export const SharePage: React.FC = () => {
     ctx.lineTo(W - 70, 220);
     ctx.stroke();
 
-    // 4. 中央發光動能核心勳章 (Kinetic Core Badge)
-    const centerX = W / 2;
-    const centerY = 680;
+    // 4. 嘗試載入雲端相片
+    let loadedImg: HTMLImageElement | null = null;
+    if (params.imageUrl) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        await new Promise((resolve) => {
+          img.onload = () => {
+            loadedImg = img;
+            resolve(true);
+          };
+          img.onerror = () => resolve(false);
+          img.src = params.imageUrl!;
+        });
+      } catch (err) {
+        console.warn('Failed to load shared image:', err);
+      }
+    }
 
-    // 放射漸層光環
-    const grad = ctx.createRadialGradient(centerX, centerY, 60, centerX, centerY, 380);
-    grad.addColorStop(0, 'rgba(255, 230, 0, 0.25)');
-    grad.addColorStop(0.5, 'rgba(255, 0, 122, 0.15)');
-    grad.addColorStop(1, 'rgba(10, 10, 10, 0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, 380, 0, Math.PI * 2);
-    ctx.fill();
+    if (loadedImg && (loadedImg as HTMLImageElement).width > 0) {
+      // 4a. 有相片：繪製 9:16 實拍精彩瞬間
+      const photoX = 70;
+      const photoY = 250;
+      const photoW = W - 140; // 940
+      const photoH = 960;
 
-    // 幾何賽博圓環
-    ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, 280, 0, Math.PI * 2);
-    ctx.stroke();
+      const { sx, sy, sw, sh } = getCoverCrop(
+        (loadedImg as HTMLImageElement).width,
+        (loadedImg as HTMLImageElement).height,
+        photoW,
+        photoH
+      );
 
-    ctx.strokeStyle = 'rgba(255, 0, 122, 0.6)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, 240, 0, Math.PI * 2);
-    ctx.stroke();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(photoX, photoY, photoW, photoH);
+      ctx.clip();
+      ctx.drawImage(loadedImg, sx, sy, sw, sh, photoX, photoY, photoW, photoH);
 
-    // 評級徽章
-    ctx.fillStyle = '#FFE600';
-    ctx.font = '900 84px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(params.rank.split(' ')[0] || 'SSS', centerX, centerY - 20);
+      // 照片外框
+      ctx.strokeStyle = '#00F0FF';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(photoX, photoY, photoW, photoH);
+      ctx.restore();
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 32px ui-monospace, monospace';
-    ctx.fillText(params.rank.replace(/^[A-Z]+\s*/, '') || 'KINETIC BEAST', centerX, centerY + 45);
+      // 四角十字準心
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 3;
+      const ch = 18;
+      ctx.strokeRect(photoX - 4, photoY - 4, ch, 2);
+      ctx.strokeRect(photoX - 4, photoY - 4, 2, ch);
+      ctx.strokeRect(photoX + photoW - ch + 4, photoY - 4, ch, 2);
+      ctx.strokeRect(photoX + photoW + 2, photoY - 4, 2, ch);
+      ctx.strokeRect(photoX - 4, photoY + photoH + 2, ch, 2);
+      ctx.strokeRect(photoX - 4, photoY + photoH - ch + 4, 2, ch);
+      ctx.strokeRect(photoX + photoW - ch + 4, photoY + photoH + 2, ch, 2);
+      ctx.strokeRect(photoX + photoW + 2, photoY + photoH - ch + 4, 2, ch);
 
-    ctx.fillStyle = '#00F0FF';
-    ctx.font = '600 20px ui-monospace, monospace';
-    ctx.fillText('OFFICIAL CERTIFIED PERFORMANCE', centerX, centerY + 110);
-    ctx.textAlign = 'left';
+      // 照片右上角標籤
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(photoX + photoW - 310, photoY + 16, 294, 38);
+      ctx.fillStyle = '#00F0FF';
+      ctx.font = '700 16px ui-monospace, monospace';
+      ctx.fillText('⚡ 30S PEAK MOMENT // 現場實拍', photoX + photoW - 300, photoY + 41);
 
-    // 5. 動能數據面板
-    const statsY = 1180;
+      // 5a. 下方動能數據面板
+      const statsY = 1250;
+      ctx.fillStyle = '#FF007A';
+      ctx.font = '900 48px ui-monospace, monospace';
+      ctx.fillText(params.rank, 70, statsY);
 
-    ctx.fillStyle = '#888888';
-    ctx.font = '600 22px ui-monospace, monospace';
-    ctx.fillText('ACCUMULATED KINETIC SCORE', 70, statsY);
+      ctx.fillStyle = '#888888';
+      ctx.font = '600 22px ui-monospace, monospace';
+      ctx.fillText('ACCUMULATED KINETIC SCORE', 70, statsY + 60);
 
-    ctx.fillStyle = '#FFE600';
-    ctx.font = '900 110px ui-monospace, monospace';
-    ctx.fillText(params.score.toLocaleString(), 70, statsY + 105);
+      ctx.fillStyle = '#FFE600';
+      ctx.font = '900 100px ui-monospace, monospace';
+      ctx.fillText(params.score.toLocaleString(), 70, statsY + 155);
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 32px ui-monospace, monospace';
-    ctx.fillText('PTS', 580, statsY + 95);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '700 30px ui-monospace, monospace';
+      ctx.fillText('PTS', 640, statsY + 145);
 
-    // 次要數據區塊
-    const subY = statsY + 190;
-    ctx.fillStyle = '#AAAAAA';
-    ctx.font = '600 24px ui-monospace, monospace';
-    ctx.fillText(`⚡ PEAK VELOCITY: ${params.peak}% (MAX REACHED)`, 70, subY);
-    ctx.fillText(`💥 SURGE BURSTS: ${params.bursts} TIMES OVERDRIVE`, 70, subY + 50);
-    ctx.fillText(`⏱️ SESSION DURATION: 30.00s FULL SPEED`, 70, subY + 100);
-    ctx.fillText(`🛡️ VERIFICATION ID: #${params.code}`, 70, subY + 150);
+      const subY = statsY + 230;
+      ctx.fillStyle = '#AAAAAA';
+      ctx.font = '600 24px ui-monospace, monospace';
+      ctx.fillText(`⚡ PEAK VELOCITY: ${params.peak}% (MAX REACHED)`, 70, subY);
+      ctx.fillText(`💥 SURGE BURSTS: ${params.bursts} TIMES OVERDRIVE`, 70, subY + 50);
+      ctx.fillText(`🛡️ VERIFICATION ID: #${params.code}`, 70, subY + 100);
+    } else {
+      // 4b. 無相片時：繪製中央發光動能核心勳章 (Kinetic Core Badge)
+      const centerX = W / 2;
+      const centerY = 680;
+
+      // 放射漸層光環
+      const grad = ctx.createRadialGradient(centerX, centerY, 60, centerX, centerY, 380);
+      grad.addColorStop(0, 'rgba(255, 230, 0, 0.25)');
+      grad.addColorStop(0.5, 'rgba(255, 0, 122, 0.15)');
+      grad.addColorStop(1, 'rgba(10, 10, 10, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 380, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 幾何賽博圓環
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 280, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 0, 122, 0.6)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 240, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 評級徽章
+      ctx.fillStyle = '#FFE600';
+      ctx.font = '900 84px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(params.rank.split(' ')[0] || 'SSS', centerX, centerY - 20);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '700 32px ui-monospace, monospace';
+      ctx.fillText(params.rank.replace(/^[A-Z]+\s*/, '') || 'KINETIC BEAST', centerX, centerY + 45);
+
+      ctx.fillStyle = '#00F0FF';
+      ctx.font = '600 20px ui-monospace, monospace';
+      ctx.fillText('OFFICIAL CERTIFIED PERFORMANCE', centerX, centerY + 110);
+      ctx.textAlign = 'left';
+
+      // 5b. 動能數據面板
+      const statsY = 1180;
+
+      ctx.fillStyle = '#888888';
+      ctx.font = '600 22px ui-monospace, monospace';
+      ctx.fillText('ACCUMULATED KINETIC SCORE', 70, statsY);
+
+      ctx.fillStyle = '#FFE600';
+      ctx.font = '900 110px ui-monospace, monospace';
+      ctx.fillText(params.score.toLocaleString(), 70, statsY + 105);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '700 32px ui-monospace, monospace';
+      ctx.fillText('PTS', 580, statsY + 95);
+
+      // 次要數據區塊
+      const subY = statsY + 190;
+      ctx.fillStyle = '#AAAAAA';
+      ctx.font = '600 24px ui-monospace, monospace';
+      ctx.fillText(`⚡ PEAK VELOCITY: ${params.peak}% (MAX REACHED)`, 70, subY);
+      ctx.fillText(`💥 SURGE BURSTS: ${params.bursts} TIMES OVERDRIVE`, 70, subY + 50);
+      ctx.fillText(`⏱️ SESSION DURATION: 30.00s FULL SPEED`, 70, subY + 100);
+      ctx.fillText(`🛡️ VERIFICATION ID: #${params.code}`, 70, subY + 150);
+    }
 
     // 6. 底部品牌與浮水印
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';

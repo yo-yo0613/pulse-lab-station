@@ -52,6 +52,11 @@ export interface ThemeConfig {
     qrMode: 'share_url' | 'offline_text' | 'custom_url';
     customUrl?: string;
   };
+  cloudinary?: {
+    enabled: boolean;
+    cloudName: string;
+    uploadPreset: string;
+  };
   sound: {
     mode: 'synth' | 'custom';
     masterVolume: number;

@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import type { PosterExportData, ThemeConfig } from '../types/pulse';
 import { downloadPosterFile, generatePosterBlobUrl } from '../services/posterExporter';
-import { Download, RotateCcw, CheckCircle, Sparkles } from 'lucide-react';
+import { uploadToCloudinary } from '../services/cloudinary';
+import { Download, RotateCcw, CheckCircle, Sparkles, Loader2 } from 'lucide-react';
 
 interface PosterModalProps {
   data: PosterExportData;
@@ -14,10 +15,34 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
   const [posterBlobUrl, setPosterBlobUrl] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(true);
   const [resetCountdown, setResetCountdown] = useState(theme.gameplay.inactivityResetSeconds);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
   const qrRef = useRef<HTMLDivElement>(null);
 
-  // 依據 qrMode 生成 QR Code 內容 (預設為 Vercel 手機成果展示分享網址)
-  const getQrPayload = () => {
+  // 在背景非同步將相片上傳至 Cloudinary
+  useEffect(() => {
+    let isMounted = true;
+    if (theme.cloudinary?.enabled && data.snapshotBlobUrl) {
+      setIsUploadingPhoto(true);
+      uploadToCloudinary(data.snapshotBlobUrl, theme.cloudinary)
+        .then((url) => {
+          if (!isMounted) return;
+          setIsUploadingPhoto(false);
+          if (url) {
+            setUploadedImageUrl(url);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setIsUploadingPhoto(false);
+        });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [theme.cloudinary, data.snapshotBlobUrl]);
+
+  // 依據 qrMode 生成 QR Code 內容 (若雲端圖片已就緒，自動帶上 img 參數)
+  const getQrPayload = useCallback(() => {
     if (theme.poster.qrMode === 'share_url') {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
       const params = new URLSearchParams({
@@ -28,15 +53,24 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
         bursts: String(data.surgeCount),
         ts: data.timestamp,
       });
+      if (uploadedImageUrl) {
+        params.set('img', uploadedImageUrl);
+      }
       return `${origin}/share?${params.toString()}`;
     }
 
     if (theme.poster.qrMode === 'custom_url' && theme.poster.customUrl) {
-      return `${theme.poster.customUrl}?score=${data.pulseScore}&rank=${encodeURIComponent(data.rank)}&code=${data.verificationCode}`;
+      const base = theme.poster.customUrl;
+      const separator = base.includes('?') ? '&' : '?';
+      let url = `${base}${separator}score=${data.pulseScore}&rank=${encodeURIComponent(data.rank)}&code=${data.verificationCode}`;
+      if (uploadedImageUrl) {
+        url += `&img=${encodeURIComponent(uploadedImageUrl)}`;
+      }
+      return url;
     }
 
     return `⚡ PULSE LAB 能量認證 ⚡\n評級: ${data.rank}\n動能累積: ${data.pulseScore.toLocaleString()} PTS\n日期: ${data.timestamp}\n防偽驗證碼: #${data.verificationCode}\n“30秒極限動能釋放完畢！”`;
-  };
+  }, [theme.poster, data, uploadedImageUrl]);
 
   const qrCodePayload = getQrPayload();
 
@@ -59,10 +93,10 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
   }, [data, theme]);
 
   useEffect(() => {
-    // 延遲 50ms 確保 QRCodeCanvas 已在 DOM 繪製完成
-    const timer = setTimeout(generatePoster, 50);
+    // 確保 QRCodeCanvas 在 DOM 繪製或更新後重新合成海報
+    const timer = setTimeout(generatePoster, 60);
     return () => clearTimeout(timer);
-  }, [generatePoster]);
+  }, [generatePoster, qrCodePayload]);
 
   // 無人值守自適應自動重置 (Inactivity Auto-Reset Watchdog)
   useEffect(() => {
@@ -180,6 +214,40 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
               <span className="text-lg font-bold text-white">
                 {data.surgeCount} TIMES
               </span>
+            </div>
+          </div>
+
+          {/* 行動端掃碼專屬區塊 */}
+          <div className="flex items-center gap-4 bg-white/5 border border-white/10 p-3">
+            <div className="bg-white p-1 rounded-sm shrink-0">
+              <QRCodeCanvas
+                value={qrCodePayload}
+                size={80}
+                level="M"
+                marginSize={1}
+                fgColor="#000000"
+                bgColor="#FFFFFF"
+              />
+            </div>
+            <div className="flex flex-col gap-1 min-w-0">
+              <span className="text-xs font-bold text-white tracking-wider flex items-center gap-1.5">
+                📱 手機掃碼取得專屬成果
+              </span>
+              {isUploadingPhoto ? (
+                <span className="text-[11px] text-[#00F0FF] flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                  <span>照片雲端同步中...</span>
+                </span>
+              ) : uploadedImageUrl ? (
+                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 shrink-0" />
+                  <span>雲端實拍照片已就緒！掃碼即看</span>
+                </span>
+              ) : (
+                <span className="text-[11px] text-white/50">
+                  即時查看認證證書與分享戰績
+                </span>
+              )}
             </div>
           </div>
 
