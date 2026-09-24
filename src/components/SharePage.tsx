@@ -77,6 +77,14 @@ export const SharePage: React.FC = () => {
     const burstsParam = query.get('bursts');
     const tsParam = query.get('ts');
     const imgParam = query.get('img');
+    let cleanImg: string | undefined = undefined;
+    if (imgParam) {
+      try {
+        cleanImg = decodeURIComponent(imgParam);
+      } catch (_) {
+        cleanImg = imgParam;
+      }
+    }
 
     setParams({
       score: scoreParam ? parseInt(scoreParam, 10) : 30708,
@@ -85,7 +93,7 @@ export const SharePage: React.FC = () => {
       peak: peakParam ? parseInt(peakParam, 10) : 100,
       bursts: burstsParam ? parseInt(burstsParam, 10) : 52,
       timestamp: tsParam ? decodeURIComponent(tsParam) : new Date().toLocaleDateString('zh-TW'),
-      imageUrl: imgParam ? decodeURIComponent(imgParam) : undefined,
+      imageUrl: cleanImg,
     });
   }, []);
 
@@ -174,8 +182,15 @@ export const SharePage: React.FC = () => {
             loadedImg = img;
             resolve(true);
           };
-          img.onerror = () => resolve(false);
-          img.src = params.imageUrl!;
+          img.onerror = () => {
+            console.warn('[SharePage] Image failed to load with CORS:', params.imageUrl);
+            resolve(false);
+          };
+          // 加入時間戳避免 Safari / 行動瀏覽器跨域快取失效
+          const srcUrl = params.imageUrl!.includes('?')
+            ? `${params.imageUrl}&_t=${Date.now()}`
+            : `${params.imageUrl}?_t=${Date.now()}`;
+          img.src = srcUrl;
         });
       } catch (err) {
         console.warn('Failed to load shared image:', err);

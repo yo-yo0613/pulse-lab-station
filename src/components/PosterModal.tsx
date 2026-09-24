@@ -15,22 +15,24 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
   const [posterBlobUrl, setPosterBlobUrl] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(true);
   const [resetCountdown, setResetCountdown] = useState(theme.gameplay.inactivityResetSeconds);
-  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(false);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(data.cloudImageUrl || null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<boolean>(
+    Boolean(theme.cloudinary?.enabled && data.snapshotBlobUrl && !data.cloudImageUrl)
+  );
   const qrRef = useRef<HTMLDivElement>(null);
 
   // 在背景非同步將相片上傳至 Cloudinary
   useEffect(() => {
     let isMounted = true;
-    if (theme.cloudinary?.enabled && data.snapshotBlobUrl) {
+    if (theme.cloudinary?.enabled && data.snapshotBlobUrl && !uploadedImageUrl) {
       setIsUploadingPhoto(true);
       uploadToCloudinary(data.snapshotBlobUrl, theme.cloudinary)
         .then((url) => {
           if (!isMounted) return;
-          setIsUploadingPhoto(false);
           if (url) {
             setUploadedImageUrl(url);
           }
+          setIsUploadingPhoto(false);
         })
         .catch(() => {
           if (isMounted) setIsUploadingPhoto(false);
@@ -39,7 +41,7 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
     return () => {
       isMounted = false;
     };
-  }, [theme.cloudinary, data.snapshotBlobUrl]);
+  }, [theme.cloudinary, data.snapshotBlobUrl, uploadedImageUrl]);
 
   // 依據 qrMode 生成 QR Code 內容 (若雲端圖片已就緒，自動帶上 img 參數)
   const getQrPayload = useCallback(() => {
@@ -74,8 +76,10 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
 
   const qrCodePayload = getQrPayload();
 
-  // 自動非同步預生成海報 Blob URL
+  // 自動非同步預生成海報 Blob URL (等照片上傳完成後才合成海報)
   const generatePoster = useCallback(async () => {
+    if (isUploadingPhoto) return;
+
     setIsGenerating(true);
     let qrCanvas: HTMLCanvasElement | null = null;
     if (qrRef.current) {
@@ -90,13 +94,15 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
     } finally {
       setIsGenerating(false);
     }
-  }, [data, theme]);
+  }, [data, theme, isUploadingPhoto]);
 
   useEffect(() => {
-    // 確保 QRCodeCanvas 在 DOM 繪製或更新後重新合成海報
-    const timer = setTimeout(generatePoster, 60);
-    return () => clearTimeout(timer);
-  }, [generatePoster, qrCodePayload]);
+    // 當照片上傳完成且 QRCodeCanvas 就緒後，自動觸發海報合成
+    if (!isUploadingPhoto) {
+      const timer = setTimeout(generatePoster, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [generatePoster, qrCodePayload, isUploadingPhoto]);
 
   // 無人值守自適應自動重置 (Inactivity Auto-Reset Watchdog)
   useEffect(() => {
@@ -136,10 +142,12 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
       <div className="relative flex flex-col lg:flex-row items-center gap-8 max-w-5xl w-full my-auto">
         {/* 左側：9:16 直立海報預覽 (Cover 居中裁切 + 瑞士網格排版) */}
         <div className="relative w-[320px] sm:w-[360px] h-[570px] sm:h-[640px] bg-[#0A0A0A] border border-white/20 shadow-[0_0_50px_rgba(0,240,255,0.2)] flex items-center justify-center overflow-hidden">
-          {isGenerating ? (
+          {isGenerating || isUploadingPhoto ? (
             <div className="flex flex-col items-center gap-3 text-white/60">
               <Sparkles className="w-8 h-8 text-[#00F0FF] animate-spin" />
-              <span className="text-xs tracking-widest">SYNTHESIZING POSTER...</span>
+              <span className="text-xs tracking-widest text-[#00F0FF]">
+                {isUploadingPhoto ? 'SYNCING CLOUD PHOTO...' : 'SYNTHESIZING POSTER...'}
+              </span>
             </div>
           ) : (
             <img
@@ -219,15 +227,22 @@ export const PosterModal: React.FC<PosterModalProps> = ({ data, theme, onRestart
 
           {/* 行動端掃碼專屬區塊 */}
           <div className="flex items-center gap-4 bg-white/5 border border-white/10 p-3">
-            <div className="bg-white p-1 rounded-sm shrink-0">
-              <QRCodeCanvas
-                value={qrCodePayload}
-                size={80}
-                level="M"
-                marginSize={1}
-                fgColor="#000000"
-                bgColor="#FFFFFF"
-              />
+            <div className="bg-white p-1 rounded-sm shrink-0 min-w-[88px] min-h-[88px] flex items-center justify-center">
+              {isUploadingPhoto ? (
+                <div className="w-[80px] h-[80px] bg-[#0A0A0A] border border-[#00F0FF]/40 flex flex-col items-center justify-center gap-1.5 p-1 text-center">
+                  <Loader2 className="w-5 h-5 text-[#00F0FF] animate-spin" />
+                  <span className="text-[9px] text-[#00F0FF] font-bold tracking-tight">照片同步中</span>
+                </div>
+              ) : (
+                <QRCodeCanvas
+                  value={qrCodePayload}
+                  size={80}
+                  level="M"
+                  marginSize={1}
+                  fgColor="#000000"
+                  bgColor="#FFFFFF"
+                />
+              )}
             </div>
             <div className="flex flex-col gap-1 min-w-0">
               <span className="text-xs font-bold text-white tracking-wider flex items-center gap-1.5">

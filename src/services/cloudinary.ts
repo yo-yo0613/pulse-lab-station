@@ -18,21 +18,26 @@ export async function uploadToCloudinary(
   }
 
   try {
-    let blob: Blob;
-    if (typeof blobOrUrl === 'string') {
-      const res = await fetch(blobOrUrl);
-      blob = await res.blob();
+    const formData = new FormData();
+
+    if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('data:')) {
+      formData.append('file', blobOrUrl);
     } else {
-      blob = blobOrUrl;
+      let blob: Blob;
+      if (typeof blobOrUrl === 'string') {
+        const res = await fetch(blobOrUrl);
+        blob = await res.blob();
+      } else {
+        blob = blobOrUrl;
+      }
+      formData.append('file', blob, 'peak_moment.png');
     }
 
-    const formData = new FormData();
-    formData.append('file', blob);
     formData.append('upload_preset', config.uploadPreset);
 
-    // 建立 8 秒超時控制器，避免弱網環境卡死海報流程
+    // 建立 6 秒超時控制器，避免弱網環境卡死海報流程
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     const response = await fetch(
       `https://api.cloudinary.com/v1_1/${config.cloudName}/image/upload`,

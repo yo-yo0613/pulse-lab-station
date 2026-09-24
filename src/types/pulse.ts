@@ -72,6 +72,7 @@ export interface PosterExportData {
   timestamp: string;
   peakKinetic: number;
   surgeCount: number;
+  cloudImageUrl?: string;
 }
 
 export interface CameraDevice {
