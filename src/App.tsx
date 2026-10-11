@@ -10,12 +10,24 @@ import { setupKioskEventJail, handleMaintainerTap } from './utils/kioskLock';
 import { unlockAndCheckAudioContext, playShutterSound } from './services/soundEngine';
 import { poseDetector } from './services/poseDetector';
 import { calculateRank, generateVerificationCode } from './utils/math';
-import { Sliders } from 'lucide-react';
+import { Sliders, Mic } from 'lucide-react';
 import { SharePage } from './components/SharePage';
+import { SeeHowYouSpeakApp } from './components/SeeHowYouSpeakApp';
+import { SpeakSharePage } from './components/SpeakSharePage';
 
 export function App() {
-  // 檢查是否為手機掃碼成果分享頁面 (/share, ?share=true, #/share)
-  const isShareView = () => {
+  // 檢查是否為手機掃碼《See How You Speak》分享頁面
+  const isSpeakShareView = () => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.pathname.startsWith('/share-speak') ||
+      window.location.hash.startsWith('#/share-speak') ||
+      window.location.search.includes('share-speak')
+    );
+  };
+
+  // 檢查是否為手機掃碼《PULSE LAB》分享頁面 (/share, ?share=true, #/share)
+  const isPulseShareView = () => {
     if (typeof window === 'undefined') return false;
     return (
       window.location.pathname.startsWith('/share') ||
@@ -24,9 +36,40 @@ export function App() {
     );
   };
 
-  if (isShareView()) {
+  if (isSpeakShareView()) {
+    return <SpeakSharePage />;
+  }
+
+  if (isPulseShareView()) {
     return <SharePage />;
   }
+
+  // 模式切換判斷 (預設進入 See How You Speak 演示林妤安專案，支援一鍵切回 PULSE LAB)
+  const getInitialMode = (): 'speak' | 'pulse' => {
+    if (typeof window === 'undefined') return 'speak';
+    const search = window.location.search;
+    if (search.includes('mode=pulse')) return 'pulse';
+    if (search.includes('mode=speak')) return 'speak';
+    return 'speak';
+  };
+
+  const [appMode, setAppMode] = useState<'speak' | 'pulse'>(getInitialMode);
+
+  // 若處於 See How You Speak 模式，渲染專屬聲音互動架構
+  if (appMode === 'speak') {
+    return (
+      <SeeHowYouSpeakApp
+        onSwitchMode={() => {
+          setAppMode('pulse');
+          const url = new URL(window.location.href);
+          url.searchParams.set('mode', 'pulse');
+          window.history.pushState({}, '', url.toString());
+        }}
+      />
+    );
+  }
+
+  // --- 以下為 PULSE LAB 體感主站邏輯 (完全保留) ---
 
   // 僅在實體互動展演主站鎖定滾動與手勢
   useEffect(() => {
@@ -225,6 +268,24 @@ export function App() {
         wakeLockActive={wakeLockActive}
       />
 
+      {/* 頂部切換至 See How You Speak 模式按鈕 */}
+      <div className="fixed top-4 right-20 z-40">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setAppMode('speak');
+            const url = new URL(window.location.href);
+            url.searchParams.set('mode', 'speak');
+            window.history.pushState({}, '', url.toString());
+          }}
+          className="px-3.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 text-white font-mono text-xs backdrop-blur-md cursor-pointer transition-all flex items-center gap-2 active:scale-95"
+          title="切換至 See How You Speak 聲音動態字體模式"
+        >
+          <Mic className="w-3.5 h-3.5 text-amber-400" />
+          <span>切換 See How You Speak</span>
+        </button>
+      </div>
+
       {/* 待機引導視圖 (IDLE / COUNTDOWN) */}
       <IdleView
         fsmState={fsmState}
@@ -254,8 +315,8 @@ export function App() {
         onToggleSkeleton={setShowSkeleton}
         isCameraActive={isCameraActive}
         onToggleCamera={setIsCameraActive}
-        onSelectCamera={setSelectedCameraId}
         selectedCameraId={selectedCameraId}
+        onSelectCamera={setSelectedCameraId}
         isEmulationMode={isEmulationMode}
         onToggleEmulation={handleToggleEmulation}
       />
