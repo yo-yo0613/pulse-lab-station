@@ -152,17 +152,19 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           </div>
         </div>
 
-        {/* 中間情緒場景標籤 */}
-        <div className="hidden md:flex items-center gap-2 bg-black/50 border border-white/10 px-3 py-1.5 rounded-full backdrop-blur-md">
-          <span
-            className="w-2.5 h-2.5 rounded-full animate-pulse"
-            style={{ backgroundColor: selectedScenario.accentColor }}
-          />
-          <span className="text-xs font-mono font-bold" style={{ color: selectedScenario.accentColor }}>
-            {selectedScenario.title.split('//')[0]}
-          </span>
-          <span className="text-xs text-zinc-500 font-mono">| {selectedScenario.emotion}</span>
-        </div>
+        {/* 中間情緒場景標籤 (僅在特定畫面顯現，避免與內部情境切換器疊圖衝突) */}
+        {speakState === 'LANDING' && (
+          <div className="hidden md:flex items-center gap-2 bg-black/50 border border-white/10 px-3 py-1.5 rounded-full backdrop-blur-md">
+            <span
+              className="w-2.5 h-2.5 rounded-full animate-pulse"
+              style={{ backgroundColor: selectedScenario.accentColor }}
+            />
+            <span className="text-xs font-mono font-bold" style={{ color: selectedScenario.accentColor }}>
+              {selectedScenario.title.split('//')[0]}
+            </span>
+            <span className="text-xs text-zinc-500 font-mono">| {selectedScenario.emotion}</span>
+          </div>
+        )}
 
         {/* 右側切換與麥克風狀態 */}
         <div className="flex items-center gap-3">
