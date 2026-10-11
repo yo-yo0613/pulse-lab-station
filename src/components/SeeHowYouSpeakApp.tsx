@@ -189,76 +189,125 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         </div>
       </header>
 
-      {/* 狀態 1：LANDING (引導主視覺畫面) */}
+      {/* 狀態 1：LANDING (新媒體展演沉浸式主視覺畫面) */}
       {speakState === 'LANDING' && (
-        <div className="relative w-full h-full flex flex-col items-center justify-center px-6 z-20">
-          {/* 背景微光光暈 */}
+        <div
+          onClick={() => setSpeakState('PROMPT_VIDEO')}
+          className="relative w-full h-full flex flex-col justify-between p-8 md:p-12 z-20 cursor-pointer overflow-hidden transition-all duration-700 select-none group"
+        >
+          {/* 展場背景流體光暈與聲學共振核心 */}
           <div
-            className="absolute w-[500px] h-[500px] rounded-full blur-[140px] opacity-25 pointer-events-none transition-all duration-700"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[650px] rounded-full blur-[160px] opacity-20 pointer-events-none transition-all duration-1000 group-hover:scale-110 group-hover:opacity-30"
             style={{ backgroundColor: selectedScenario.themeColor }}
           />
 
-          <div className="max-w-2xl text-center space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/15 bg-white/5 text-xs text-zinc-300 tracking-wider">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              林妤安《See How You Speak》Top 1 原創概念互動原型
+          {/* 展場四角精密十字準心與技術規格標註 */}
+          <div className="absolute top-20 left-8 text-[11px] font-mono text-zinc-600 tracking-widest hidden md:block pointer-events-none">
+            + [GRID: 01-ACOUSTIC] // KINETIC MATRIX<br />
+            + [SAMPLE RATE: 48kHz] // COMPOSITOR ACCEL
+          </div>
+          <div className="absolute top-20 right-8 text-[11px] font-mono text-zinc-600 text-right tracking-widest hidden md:block pointer-events-none">
+            + [CURATOR: LIN YU-AN] // TOP 1<br />
+            + [SYSTEM: REACT 19 + WEB AUDIO]
+          </div>
+          <div className="absolute bottom-24 left-8 text-[11px] font-mono text-zinc-600 tracking-widest hidden md:block pointer-events-none">
+            + [DTW ENGINE: 1D WARPING MATRIX]<br />
+            + [POSTER SYNTHESIS: 1080x1920 9:16]
+          </div>
+          <div className="absolute bottom-24 right-8 text-[11px] font-mono text-zinc-600 text-right tracking-widest hidden md:block pointer-events-none">
+            + [SLOT ARCHITECTURE: READY FOR TD/AE]<br />
+            + [STATUS: 60FPS IDLE MONITORING]
+          </div>
+
+          {/* 中央巨幅破版前衛字體 (Kinetic Typography Poster Style) */}
+          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4 my-auto">
+            {/* 展演代號標籤 */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-white/20 bg-white/5 backdrop-blur-md text-[11px] text-zinc-300 font-mono tracking-widest uppercase transition-all group-hover:border-white/40">
+              <span
+                className="w-2 h-2 rounded-full animate-ping"
+                style={{ backgroundColor: selectedScenario.accentColor }}
+              />
+              <span>IMMERSIVE AUDIO-VISUAL INSTALLATION</span>
             </div>
 
-            <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-tight">
-              把你的聲音
-              <br />
+            {/* 巨型英文字標 */}
+            <h1 className="text-6xl sm:text-8xl md:text-9xl font-black tracking-tighter uppercase leading-[0.85] text-transparent bg-clip-text bg-gradient-to-b from-white via-white/90 to-white/30 drop-shadow-[0_0_40px_rgba(255,255,255,0.15)] transition-transform duration-500 group-hover:scale-[1.02]">
+              SEE HOW<br />
               <span
-                className="text-transparent bg-clip-text"
                 style={{
-                  backgroundImage: `linear-gradient(135deg, #FFFFFF, ${selectedScenario.accentColor})`,
+                  color: selectedScenario.accentColor,
+                  textShadow: `0 0 45px ${selectedScenario.themeColor}88`,
                 }}
               >
-                變成看得見的動態字
+                YOU SPEAK
               </span>
             </h1>
 
-            <p className="text-sm md:text-base text-zinc-400 max-w-xl mx-auto leading-relaxed">
-              傳統字幕只呈現「說了什麼」，而在這裡，文字將隨你的音量、音高、聲嘶力竭而即時扭曲、膨脹與共振。
-            </p>
-
-            {/* 4 步驟流程導引 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-4 text-left">
-              {[
-                { step: '01', title: '選取原片', desc: '觀察台詞情緒與聲調' },
-                { step: '02', title: '對麥模仿', desc: '傾注聲能跟隨起伏' },
-                { step: '03', title: '字體共振', desc: '60fps 零掉幀物理變形' },
-                { step: '04', title: '導出憑證', desc: 'DTW 評級與海報掃碼' },
-              ].map((item) => (
-                <div
-                  key={item.step}
-                  className="p-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur-sm"
-                >
-                  <span
-                    className="text-xs font-black font-mono block"
-                    style={{ color: selectedScenario.accentColor }}
-                  >
-                    {item.step}
-                  </span>
-                  <p className="text-xs font-bold text-white mt-1">{item.title}</p>
-                  <p className="text-[10px] text-zinc-400 mt-0.5">{item.desc}</p>
-                </div>
-              ))}
+            {/* 中文核心概念字標 */}
+            <div className="space-y-2 pt-2">
+              <p className="text-2xl sm:text-4xl font-black tracking-[0.35em] text-white/90">
+                看 你 怎 麼 說 話
+              </p>
+              <p className="text-xs sm:text-sm font-mono text-zinc-400 tracking-widest max-w-lg mx-auto">
+                // 聲音的形狀，由你決定。傳統字幕記錄內容，此處看見情緒。
+              </p>
             </div>
 
-            {/* 啟動按鈕 */}
-            <div className="pt-6">
-              <button
-                onClick={() => setSpeakState('PROMPT_VIDEO')}
-                className="group px-8 py-4 rounded-xl font-black text-sm tracking-widest uppercase transition-all duration-300 cursor-pointer shadow-2xl flex items-center gap-3 mx-auto active:scale-95 hover:brightness-110"
+            {/* 聲學互動觸發光環 (Sonic Orb Trigger) */}
+            <div className="pt-8">
+              <div
+                className="relative inline-flex items-center justify-center p-1 rounded-full border transition-all duration-500 group-hover:scale-105"
                 style={{
-                  backgroundColor: selectedScenario.accentColor,
-                  color: '#000000',
-                  boxShadow: `0 0 35px ${selectedScenario.themeColor}55`,
+                  borderColor: `${selectedScenario.accentColor}66`,
+                  boxShadow: `0 0 30px ${selectedScenario.themeColor}44`,
                 }}
               >
-                <span>進入情緒場景選擇</span>
-                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-              </button>
+                <div
+                  className="px-8 py-3.5 rounded-full font-mono font-black text-xs sm:text-sm tracking-[0.25em] uppercase flex items-center gap-3 transition-colors"
+                  style={{
+                    backgroundColor: selectedScenario.accentColor,
+                    color: '#000000',
+                  }}
+                >
+                  <Sparkles className="w-4 h-4 animate-spin" />
+                  <span>點擊任意處開始體驗 // TOUCH TO ENTER</span>
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 底部情緒場景快速預選條 (Exhibition Scenario Switcher) */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl mx-auto flex items-center justify-between gap-2 p-2 rounded-xl bg-black/60 border border-white/10 backdrop-blur-lg z-30"
+          >
+            <span className="text-[10px] font-mono text-zinc-500 px-3 tracking-widest uppercase hidden sm:inline">
+              SELECT PRESET
+            </span>
+            <div className="flex-1 flex gap-1.5 overflow-x-auto">
+              {PROMPT_SCENARIOS.map((sc) => {
+                const isActive = sc.id === selectedScenario.id;
+                return (
+                  <button
+                    key={sc.id}
+                    onClick={() => setSelectedScenario(sc)}
+                    className={`flex-1 min-w-[110px] py-2 px-2.5 rounded-lg text-left font-mono text-[11px] transition-all cursor-pointer border ${
+                      isActive
+                        ? 'bg-white/15 border-white/60 text-white shadow-lg'
+                        : 'bg-transparent border-white/5 text-zinc-400 hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: sc.accentColor }}
+                      />
+                      <span className="font-bold truncate">{sc.title.split('//')[0]}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
