@@ -4,8 +4,8 @@
 * **專案名稱**：《See How You Speak》 (看你怎麼說話)
 * **核心提案者**：林妤安（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / Cloudinary)
-* **架構決策原則**：18 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v2.1.0 (Vocal Nuance & Kinetic Typography Edition)
+* **架構決策原則**：22 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v2.2.0 (Industrial Production & Exhibition Master PRD)
 * **最後更新**：2026 年 10 月 14 日
 
 ---
@@ -184,6 +184,26 @@ flowchart TD
 
 ---
 
+### 📦 組別六：多媒體載入、硬體相容與字體註冊組 (A/B 19 ~ A/B 22)
+
+#### 【A/B 19】 多段示範台詞與影片載入策略：單一頁面一次預載 (Eager Preload) vs 頁面按需流式加載 (Lazy Streaming)
+* **方案 A（陷阱）**：頁面啟動時一次下載所有 3~5 段示範影片（~20MB），若展場或評圖現場 WiFi 訊號不穩，開場會卡在 Loading 畫面 10 秒以上，造成嚴重冷場。
+* **方案 B（最佳實踐，100% 採用）**：**單一預設情境預載 + 異步背景預拉取 (Service Worker Background Fetch)**。初次啟動只載入 1 段預設台詞影片（~2MB）確保 0.3 秒極速開場；體驗者在 Step 1 閱讀說明與挑選時，系統於背景執行 Service Worker 默默預載其餘情境選項，達成「零等待無感切換」。
+
+#### 【A/B 20】 麥克風多通道音量輸入相容性：單聲道強轉 (Mono Downmix) vs 自動雙通道陣列 (Stereo Array)
+* **方案 A（陷阱）**：直接讀取 `audioCtx.createMediaStreamSource(stream)` 預設 channel，若展場使用的是專業立體聲聲卡或雙頭指向性麥克風，常遇到只有右聲道帶有訊號、左聲道為空，導致演算法誤判為靜音，採樣數值全為 `0`。
+* **方案 B（最佳實踐，100% 採用）**：**Web Audio Channel Merger & Downmix 管線**。透過 `ChannelMergerNode` 或 `ChannelSplitterNode` 將所有實體輸入通道訊號強轉並混合為單聲道（Mono Downmix：$(L+R)/2$ 或 $\max(L, R)$），無論連接筆電內建麥克風、USB 指向麥或專業錄音介面，均能 100% 穩定擷取音量與音高。
+
+#### 【A/B 21】 評分相似度之挫折感控制：絕對分數直出 vs 娛樂性正規化動態曲面 (Gamified Non-linear Scaling)
+* **方案 A（陷阱）**：DTW 演算法算出 42 分就直接硬生生顯示 42 分，民眾或評審模仿不夠像會產生強烈挫折感，覺得裝置壞了，不敢掃碼帶走海報或分享社群。
+* **方案 B（最佳實踐，100% 採用）**：**S 型保底曲線 + 娛樂性稱號動態映射 (Base Floor 60 + Dynamic Scale)**。將 DTW 計算結果帶入 $\text{FinalScore} = 60 + (\text{RawDTW} \times 0.38)$，最低給予 60 分保底；並根據「音量爆發力」與「音高走勢」給予特殊稱號（如：`SSS 賽博暴音王`、`S 靈魂聲優`、`A 能量超載`），大幅激發體驗者的分享慾望與拍照意願！
+
+#### 【A/B 22】 美術與技術的字體替換架構：硬編碼綁定特定字體 vs 配置化可變字體動態註冊器 (Font Registry Architecture)
+* **方案 A（陷阱）**：把 CSS 變數直接綁死在某一款特定的 `.woff2` 字體名稱上，若林妤安中途想換 3 款不同風格的中文字體，程式碼多個元件需要同步人工改寫。
+* **方案 B（最佳實踐，100% 採用）**：**Font Registry 配置化動態註冊器**。在 JSON 配置檔中註冊字體名稱與其支援的變形軸（`wght`, `wdth`, `slnt`），林妤安只要丟入新字體檔並修改 JSON 配置，系統即可自動動態注入 `@font-face` 並無縫套用，工程端 0 程式碼更動！
+
+---
+
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
 
 ### 5.1 音訊採樣 Hook (`src/hooks/useAudioAnalyzer.ts`)
@@ -239,7 +259,7 @@ export interface AudioMetrics {
 
 ---
 
-## ⚠️ 七、 現場實戰老手視角：13 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
+## ⚠️ 七、 現場實戰老手視角：17 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
 
 ### 7.1 可變字體 (Variable Fonts) 本地離線快取陷阱
 * **隱性災難**：依賴 Google Fonts 等外網 CDN，展場斷網時字體降級為新細明體，形變動畫全毀。
@@ -292,6 +312,22 @@ export interface AudioMetrics {
 ### 7.13 饒舌與極速咬字 (16分音符高頻脈衝) 造成的視覺閃爍致癲癇風險 (Visual Strobe Fatigue)
 * **隱性災難**：遇到快嘴饒舌或快速爆破音，音量在 1 秒內劇烈跳動 8~12 次，字體高頻劇烈閃爍膨脹（Strobe Effect），體驗者與評審長時間觀看容易產生視覺暈眩與眼睛疲勞。
 * **避坑防線**：在 Attack 訊號上升沿植入 25ms 最小遲滯平滑（Hysteresis Low-pass Filter），過濾掉毫秒級雜訊微震，保留具音樂節奏感的俐落咬字縮放，而非機械式高頻抽搐。
+
+### 7.14 體驗者唸錯台詞或停頓過長之 DTW 脫軌與字體失步 (Utterance Misalignment)
+* **隱性災難**：現有企劃書假設體驗者會照著字幕 100% 準確講出台詞。但若體驗者太緊張唸錯字、停頓 2 秒或少唸三個字，DTW 比對的時間軸會發生「強制拖拉對齊」或文字變形與聲音完全對不上的尷尬場面。
+* **避坑防線**：在 Step 3 錄音時採 **「雙軌獨立解耦」**：即時字體變形直接連動當前聲波 Audio Volume/Pitch（即時反應）；DTW 演算法僅在錄音結束後，針對聲音能量與音高走勢進行「整體特徵曲線形態比對」，不強制要求每個字音節 1:1 時間戳死鎖。
+
+### 7.15 團隊視覺進度與工程端開工時間差之協作心理落差 (Design Collaboration Buffer)
+* **隱性災難**：林妤安身為視覺總監，對美感要求極高。如果工程端過早掏出完整的彩色 UI，可能會讓她產生「視覺已經被工程定死、我沒發揮空間」的誤解或拉鋸壓力。
+* **避坑防線**：Demo 時保持 **「Wireframe / 灰階骨架插槽展示」**。溝通時明確告知：「**最難的聲音演算法和字體動態變形骨架我已經寫好了，所有的視覺質感（顏色、字體、背景影片、UI 風格）全數留給妳主導！底層留了插槽，妳隨時可以替換資材。**」
+
+### 7.16 展場筆電與觸控大螢幕之「休眠黑屏」與「系統 DPI 縮放 (125%/150%)」破版
+* **隱性災難**：課堂展示或展場長時間放置時，Windows/Mac 的「螢幕自動關閉/睡眠」或「系統 DPI 縮放 (125%/150%)」會導致 Canvas 渲染變形或頁面中斷。
+* **避坑防線**：在 `LANDING` 狀態植入 `navigator.wakeLock.request('screen')` (Web Wake Lock API) 阻止螢幕休眠；離屏 Canvas 與文字變形容器採用固定 `CSS Aspect Ratio (9:16)` 與 `viewBox` 計算，徹底不受系統 DPI 縮放影響。
+
+### 7.17 手機端 QR Code 開啟後「LINE / 微信內建 Webview 限制」與離線保全
+* **隱性災難**：體驗者若使用 LINE 或微信內建瀏覽器掃描 QR Code，這些 App 的 Webview 常會限制 Cookie / LocalStorage 或阻擋外鏈。
+* **避坑防線**：`/share-speak` 手機成果頁保持為 **「零依賴純 HTML/CSS + Cloudinary 圖片直載」**，完全不讀寫 LocalStorage，不調用複雜 API，確保用任何通訊軟體內建瀏覽器開啟均能 0.1 秒無痛載入海報！
 
 ---
 
