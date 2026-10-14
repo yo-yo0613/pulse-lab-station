@@ -214,9 +214,18 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     });
     if (uploadedImageUrl) {
       params.set('img', uploadedImageUrl);
+    } else if (userVolumeSlice && userVolumeSlice.length > 0) {
+      // 離線降級：取 16 個代表性聲波特徵點壓入 URL (A/B 24 方案 B)
+      const samples: number[] = [];
+      const step = Math.max(1, Math.floor(userVolumeSlice.length / 16));
+      for (let i = 0; i < 16; i++) {
+        const idx = Math.min(userVolumeSlice.length - 1, i * step);
+        samples.push(Math.round(userVolumeSlice[idx] || 0));
+      }
+      params.set('w', samples.join(','));
     }
     return `${origin}/share-speak?${params.toString()}`;
-  }, [scoreResult, scenario, uploadedImageUrl]);
+  }, [scoreResult, scenario, uploadedImageUrl, userVolumeSlice]);
 
   const qrCodePayload = getQrPayload();
 

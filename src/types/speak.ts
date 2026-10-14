@@ -14,7 +14,11 @@ export interface AudioMetrics {
   rawVolume: number;         // 0 ~ 100 未濾波音量
   smoothVolume: number;      // 彈簧阻尼平滑音量
   pitchHz: number;           // 85 ~ 350Hz 基頻
-  pitchNormalized: number;    // 0 ~ 1 歸一化音高
+  pitchNormalized: number;   // 0 ~ 1 歸一化音高
+  pitchYOffset: number;      // -28 ~ +28 px 語調高低 Y 軸位移
+  sustainedDuration: number; // 0 ~ 1.5s 拉長音累加秒數
+  isSustained: boolean;      // 是否觸發拉長音狀態
+  isStaccato: boolean;       // 是否為短促音/咬字快攻瞬態
   isVoiceActive: boolean;    // 是否突破環境底噪門檻
   frequencyData: Uint8Array; // 頻譜資料 (低/中/高頻)
   waveform: Float32Array;    // 時域波形資料

@@ -74,6 +74,10 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     smoothVolume: 0,
     pitchHz: 120,
     pitchNormalized: 0.2,
+    pitchYOffset: 0,
+    sustainedDuration: 0,
+    isSustained: false,
+    isStaccato: false,
     isVoiceActive: false,
     frequencyData: new Uint8Array(128),
     waveform: new Float32Array(512),
@@ -103,6 +107,14 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
   const smoothPitchNormRef = useRef<number>(0.2);
   const lastFrameTimeRef = useRef<number>(performance.now());
   const zeroFramesCountRef = useRef<number>(0);
+
+  // 林妤安語感物理追蹤器：動態基準線、持音累加器、短音脈衝
+  const pitchBaselineRef = useRef<number>(150);
+  const sustainedDurationRef = useRef<number>(0);
+  const recentPitchesRef = useRef<number[]>([]);
+  const lastRawVolRef = useRef<number>(0);
+  const lastRiseTimeRef = useRef<number>(0);
+  const isStaccatoRef = useRef<boolean>(false);
 
   // 錄音硬體時鐘
   const recordingStartAudioTimeRef = useRef<number>(0);
@@ -285,15 +297,64 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
       const sampleRate = audioCtxRef.current?.sampleRate || 44100;
       const { pitchHz, pitchNorm } = detectFundamentalPitch(timeData, sampleRate);
 
-      // 5. 非對稱彈簧阻尼平滑 (Attack 迅猛 16ms / Decay 平滑 120ms + dt 補償)
+      // 短音快攻瞬態偵測 (Staccato Impulse)
+      const volDelta = rawVol - lastRawVolRef.current;
+      if (volDelta > 25) {
+        lastRiseTimeRef.current = now;
+      }
+      const isQuickImpulse = now - lastRiseTimeRef.current < 90 && rawVol < smoothVolumeRef.current;
+      isStaccatoRef.current = isQuickImpulse;
+      lastRawVolRef.current = rawVol;
+
+      // 5. 非對稱自適應彈簧阻尼平滑 (Attack 迅猛 16ms / Decay 雙階自適應)
       const attackSpeed = 1 - Math.exp(-22 * dt);
-      const decaySpeed = 1 - Math.exp(-7 * dt);
+      const decayCoeff = isQuickImpulse ? 26 : 7;
+      const decaySpeed = 1 - Math.exp(-decayCoeff * dt);
       const alpha = rawVol > smoothVolumeRef.current ? attackSpeed : decaySpeed;
 
       smoothVolumeRef.current += (rawVol - smoothVolumeRef.current) * alpha;
       smoothPitchNormRef.current += (pitchNorm - smoothPitchNormRef.current) * (1 - Math.exp(-12 * dt));
 
       const isVoiceActive = smoothVolumeRef.current > noiseFloor;
+
+      // 個人化指數滑動動態音高基準線 (A/B 14 方案 B)
+      if (isVoiceActive) {
+        if (pitchBaselineRef.current === 150) {
+          pitchBaselineRef.current = pitchHz;
+        } else {
+          pitchBaselineRef.current += (pitchHz - pitchBaselineRef.current) * (1 - Math.exp(-0.8 * dt));
+        }
+      }
+      // 雙曲正切軟箝位 [-28, +28] px (隱性坑點 7.10 防護)
+      const deltaPitch = pitchHz - (pitchBaselineRef.current || 150);
+      const pitchYOffset = isVoiceActive ? Math.round(-Math.tanh(deltaPitch / 60) * 28) : 0;
+
+      // 拉長音雙條件滑動窗口判定 (A/B 15 方案 B + 隱性坑點 7.11 信噪比防線)
+      if (isVoiceActive && smoothVolumeRef.current > noiseFloor + 8) {
+        recentPitchesRef.current.push(pitchHz);
+        if (recentPitchesRef.current.length > 12) recentPitchesRef.current.shift();
+
+        let sumP = 0;
+        for (let i = 0; i < recentPitchesRef.current.length; i++) sumP += recentPitchesRef.current[i];
+        const meanP = sumP / recentPitchesRef.current.length;
+        let varP = 0;
+        for (let i = 0; i < recentPitchesRef.current.length; i++) {
+          const diff = recentPitchesRef.current[i] - meanP;
+          varP += diff * diff;
+        }
+        const stdP = Math.sqrt(varP / recentPitchesRef.current.length);
+        const relativeStd = meanP > 0 ? stdP / meanP : 1;
+
+        if (relativeStd < 0.10 && recentPitchesRef.current.length >= 6) {
+          sustainedDurationRef.current = Math.min(1.5, sustainedDurationRef.current + dt);
+        } else {
+          sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
+        }
+      } else {
+        recentPitchesRef.current = [];
+        sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 3.5);
+      }
+      const isSustained = sustainedDurationRef.current > 0.2;
 
       // 6. 錄音狀態下記錄至定長環形緩衝池 (0 GC 開銷)
       if (isRecordingRef.current && headPointerRef.current < BUFFER_CAPACITY) {
@@ -311,6 +372,10 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
         smoothVolume: Math.round(smoothVolumeRef.current),
         pitchHz,
         pitchNormalized: Number(smoothPitchNormRef.current.toFixed(3)),
+        pitchYOffset,
+        sustainedDuration: Number(sustainedDurationRef.current.toFixed(2)),
+        isSustained,
+        isStaccato: isStaccatoRef.current,
         isVoiceActive,
         frequencyData: freqData,
         waveform: timeData,

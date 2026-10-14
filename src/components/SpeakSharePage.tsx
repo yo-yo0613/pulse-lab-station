@@ -17,6 +17,7 @@ interface SpeakShareParams {
   sc: string;
   ts: string;
   imageUrl?: string;
+  waveSamples?: number[];
 }
 
 export const SpeakSharePage: React.FC = () => {
@@ -53,6 +54,7 @@ export const SpeakSharePage: React.FC = () => {
     const scParam = query.get('sc');
     const tsParam = query.get('ts');
     const imgParam = query.get('img');
+    const wParam = query.get('w');
 
     let cleanImg: string | undefined = undefined;
     if (imgParam) {
@@ -61,6 +63,13 @@ export const SpeakSharePage: React.FC = () => {
       } catch (_) {
         cleanImg = imgParam;
       }
+    }
+
+    let parsedWave: number[] | undefined = undefined;
+    if (wParam) {
+      try {
+        parsedWave = wParam.split(',').map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+      } catch (_) {}
     }
 
     setParams({
@@ -72,6 +81,7 @@ export const SpeakSharePage: React.FC = () => {
       sc: scParam || 'fury-roar',
       ts: tsParam ? decodeURIComponent(tsParam) : new Date().toLocaleDateString('zh-TW'),
       imageUrl: cleanImg,
+      waveSamples: parsedWave,
     });
   }, []);
 
@@ -155,17 +165,30 @@ export const SpeakSharePage: React.FC = () => {
     ctx.textAlign = 'center';
     ctx.fillText(`「${params.line}」`, W / 2, cardY + 380);
 
-    // 模擬動態波形
+    // 聲音波形簽名 (若有離線採樣數據則繪製真實聲波，否則模擬)
     ctx.strokeStyle = scenario.accentColor;
     ctx.lineWidth = 5;
     ctx.beginPath();
     const waveY = cardY + 680;
-    for (let i = 0; i < 60; i++) {
-      const x = cardX + 40 + i * ((cardW - 80) / 59);
-      const val = Math.sin(i * 0.2) * 50 + Math.cos(i * 0.5) * 30;
-      const y = waveY - val;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+
+    if (params.waveSamples && params.waveSamples.length > 0) {
+      const samples = params.waveSamples;
+      const step = (cardW - 80) / Math.max(1, samples.length - 1);
+      for (let i = 0; i < samples.length; i++) {
+        const x = cardX + 40 + i * step;
+        const vol = samples[i] || 0;
+        const y = waveY - (vol / 100) * 140;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    } else {
+      for (let i = 0; i < 60; i++) {
+        const x = cardX + 40 + i * ((cardW - 80) / 59);
+        const val = Math.sin(i * 0.2) * 50 + Math.cos(i * 0.5) * 30;
+        const y = waveY - val;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
     }
     ctx.stroke();
 
