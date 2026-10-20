@@ -4,9 +4,9 @@
 * **專案名稱**：《See How You Speak》 (看你怎麼說話)
 * **核心提案者**：林妤安（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / Cloudinary)
-* **架構決策原則**：27 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v2.3.0 (Ultimate Offline & Collaboration Master PRD)
-* **最後更新**：2026 年 10 月 14 日
+* **架構決策原則**：32 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v2.4.0 (Omni-Input & Zero-Touch Touchless Master PRD)
+* **最後更新**：2026 年 10 月 21 日
 
 ---
 
@@ -226,6 +226,28 @@ flowchart TD
 * **方案 A（陷阱）**：打掃阿姨踢掉延長線跳電，展機重開後停在 Windows/Mac 桌面，現場工讀生不知道點哪一個檔案。
 * **方案 B（最佳實踐，100% 採用）**：**Chrome `--kiosk --incognito` 捷徑開機自啟動**。開機 5 秒自動全螢幕啟動展示頁，無網址列、無邊框、防觸控退出，直接進入 `LANDING` 聲學待機狀態，具備展場級自癒能力。
 
+### 🎮 組別八：全模態輸入與零接觸聲控展演組 (A/B 28 ~ A/B 32)
+
+#### 【A/B 28】 全模態輸入架構聚合：多重分散事件監聽 vs 集中式全模態事件匯流排 (Omni-Input Action Bus)
+* **方案 A（陷阱）**：鍵盤、觸控螢幕、聲控閾值、簡報筆、手機遙控在不同組件內各自寫 `onClick`、`addEventListener('keydown')`、`onVoiceTrigger`，造成狀態跳轉競態衝突、多重重複觸發、邏輯碎片化且極難調試。
+* **方案 B（最佳實踐，100% 採用）**：**集中式全模態事件匯流排 (Omni-Input Action Bus)**。底層將「觸控螢幕點擊、實體簡報筆/鍵盤、聲控 VAD 關鍵詞、手機遠端遙控」統一抽象化為 4 大純粹語意動作：`NEXT_STEP`、`START_RECORDING`、`FORCE_SUBMIT`、`RESTART`。由單一有限狀態機 (FSM) 統一消費，任一輸入源隨插即用且永遠互斥安全！
+
+#### 【A/B 29】 零碰觸聲控跳轉的觸發演算法：純音量峰值門檻 vs 雙重 VAD 語音活動檢測 + 150ms 連續能量窗口
+* **方案 A（陷阱）**：只用音量閾值（如 `volume > 35`）當作「使用者開口說話」的跳轉訊號。展場路人拍手、關門聲、重物落地引發的瞬間脈衝波，導致系統在無人時莫名其妙自走跳頁空轉。
+* **方案 B（最佳實踐，100% 採用）**：**雙重 VAD (Voice Activity Detection) + 150ms 人聲能量滑動窗口**。除音量突破底噪閾值外，基頻需落在正常人聲基頻區間（85Hz ~ 350Hz），且必須連續維持能量超過 150ms，完全過濾非人聲之瞬間拍掌聲或腳步撞擊聲，達成真正的「零接觸人聲即開跑」。
+
+#### 【A/B 30】 展場無外網環境下的手機遠端遙控傳輸：雲端 WebSocket 中繼 vs 本地 Peer-to-Peer 廣播 / 零外網 Local Host Web Remote
+* **方案 A（陷阱）**：手機當遙控器走公有雲 WebSocket 伺服器，展場地下室斷網或延遲高達 300ms，按鍵反應遲緩甚至斷線報錯，令展演當場開天窗。
+* **方案 B（最佳實踐，100% 採用）**：**本地局域網輕量廣播 (Local Host Web Remote) / WebRTC DataChannel 本地直連**。機台螢幕生成含本地 Session Token 之配對 QR Code，策展人員或使用者手機連入同區網（或自建熱點），以極致輕量化 JSON 指令在 16ms 內發送操控 Action，無外網依然秒點秒響應！
+
+#### 【A/B 31】 多輸入併發競態防護 (Race Condition)：自由競爭跳轉 vs FSM 狀態鎖定互斥閥門 (Transition Mutex with 350ms Debounce)
+* **方案 A（陷阱）**：未加輸入互斥鎖，熱心觀眾手指點擊觸控螢幕的同時，導覽員剛好按下簡報筆，觸發雙重跳轉直接跳過錄音倒數進入評分崩潰頁。
+* **方案 B（最佳實踐，100% 採用）**：**FSM 狀態遷移互斥鎖 (Transition Mutex) + 350ms 防抖時間戳**。狀態機在執行任何狀態遷移時，瞬間上鎖 350ms，期間所有多餘的觸碰、按鍵或語音脈衝一律作為無效事件安靜丟棄，徹底杜絕多重輸入造成的狀態紊亂。
+
+#### 【A/B 32】 零碰觸與公共展演的待機自癒：永久停留海報頁 vs 階梯式無人自動退回機制 (Tiered Watchdog Timer)
+* **方案 A（陷阱）**：前一位觀眾體驗完畢走人，畫面永久定格在海報成果頁。後續路過民眾不知道這是一台互動裝置，以為是故障海報看板不敢碰觸。
+* **方案 B（最佳實踐，100% 採用）**：**階梯式看門狗無人自動退回機制 (Tiered Watchdog Timer)**。在成果評分頁若 10 秒無操作自動進入海報頁；海報頁若 20 秒無人點擊或掃碼，自動啟動 5 秒倒數並無縫退回 `LANDING` 迎賓待命狀態，同時自動重新校準現場底噪，達成 7x24 小時無人值守自動運轉。
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -283,7 +305,7 @@ export interface AudioMetrics {
 
 ---
 
-## ⚠️ 七、 現場實戰老手視角：21 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
+## ⚠️ 七、 現場實戰老手視角：26 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
 
 ### 7.1 可變字體 (Variable Fonts) 本地離線快取陷阱
 * **隱性災難**：依賴 Google Fonts 等外網 CDN，展場斷網時字體降級為新細明體，形變動畫全毀。
@@ -368,6 +390,26 @@ export interface AudioMetrics {
 ### 7.21 現場 500 人高密 2.4GHz 頻段藍牙干擾與麥克風爆音斷流 (Wireless Mic Interference)
 * **隱性災難**：展場現場參觀者眾多，數百支手機的 2.4GHz WiFi 與藍牙熱點會嚴重衝擊無線麥克風接收器，造成隨機爆音、斷流甚至音量歸零。
 * **避坑防線**：展場收音嚴格規定**「禁止使用任何消費級 2.4GHz 無線麥克風」**，堅決採用有線 USB 指向性麥克風或 XLR 轉 USB 介面，物理隔絕一切空中頻段干擾。
+
+### 7.22 聲控模式下「原片示範音效」自觸發錄音死循環 (Acoustic Echo Loop Trigger)
+* **隱性災難**：在全聲控模式下，機台播放 `PROMPT_VIDEO` 示範原音（如蠟筆小新「Oh~更愛你了」），喇叭播出的聲音被同一台機台的麥克風收錄，系統誤以為是體驗者在講話，示範影片剛放完就瞬間把原聲錄進去並自動送出評分，造成自問自答的荒謬閉環。
+* **避坑防線**：建立「音訊監聽狀態閘門（Acoustic Gate Lock）」。在 `PROMPT_VIDEO` 播放期間，軟體層強制將聲控觸發監聽器完全靜音（Mute VAD Listener）；待示範影片播放完畢、螢幕出現顯眼的「換你說話（NOW YOUR TURN）」倒數結束後，才精準在第 0 毫秒解鎖麥克風聲控觸發！
+
+### 7.23 簡報筆「長按連擊 (Key Repeat)」引發連跳多頁崩潰 (Presenter Clicker Auto-Repeat Flood)
+* **隱性災難**：展場人員手持 USB 簡報筆導覽時，緊張或手指用力按住翻頁鍵不放，作業系統觸發鍵盤重複輸入（Auto-repeat 每秒發送 30 次 `ArrowRight` / `Space`），導致互動狀態機在 0.5 秒內連續跳過示範、錄音、評分，直接殺到結束頁。
+* **避坑防線**：在鍵盤與簡報筆監聽層嚴格加入 `if (event.repeat) return;` 攔截，且所有按鍵動作強制綁定 `keyup`（放開才判定）而非 `keydown`，徹底封死長按連發可能。
+
+### 7.24 觸控螢幕「水滴/手汗/多人雙指」引發手勢縮放 (Pinch-to-Zoom) 破版
+* **隱性災難**：展場採用大尺寸電容觸控螢幕，因觀眾手汗或多人同時好奇觸碰，瀏覽器預設將雙指判定為畫面放大（Pinch to Zoom），導致整個 UI 破版、位移、按鈕移出畫面外且無法縮回。
+* **避坑防線**：在 HTML `index.html` 的 viewport 強制寫死 `user-scalable=no, maximum-scale=1.0, minimum-scale=1.0`，並在全域 CSS 根節點加入 `touch-action: manipulation; -webkit-user-select: none; user-select: none;`，並在 `touchstart` 掛載雙指 `e.touches.length > 1` 時的 `e.preventDefault()`。
+
+### 7.25 手機遠端遙控被路人掃碼「惡意搶奪控制權」 (Remote Hijacking Defense)
+* **隱性災難**：若手機遠端遙控的 QR Code 長期顯示在大螢幕角落，路過好奇的民眾隨手拿手機一掃，也能進入遙控頁面，在他人正在體驗時胡亂點擊下一頁或重開，破壞展演流程。
+* **避坑防線**：遠端遙控入口嚴格實施「動態短期 Token + 維護者專屬喚出」：平時大螢幕絕不顯示遙控 QR Code，僅能由工作人員連點螢幕左上角 5 次在「維護者暗樁抽屜」中喚出，或採用動態 4 位數 PIN 碼配對，超過 1 台手機連入時自動剔除舊連線。
+
+### 7.26 零碰觸模式下「長時間無滑鼠移動被作業系統判定為休眠」 (OS Idle Screen Sleep)
+* **隱性災難**：在全聲控或手機遙控模式下，實體展機沒有任何實體滑鼠或鍵盤移動事件，Windows 或 macOS 系統在 5~10 分鐘後自動觸發螢幕保護程式或直接關閉螢幕黑屏，展場直接斷電感。
+* **避坑防線**：除了調用現代瀏覽器的 `navigator.wakeLock.request('screen')` 之外，系統每當 FSM 進行任何一次狀態跳轉，便以 JS 向 DOM 發射微小的虛擬活性心跳（Heartbeat Synthetic Pointer Event），並在展演指南中提供 Windows / Mac 一鍵關閉休眠的 Power Management 設定檔指令。
 
 ---
 
