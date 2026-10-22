@@ -72,6 +72,19 @@ export function compareVoiceDTW(
   refVolumeCurve: number[],
   refPitchCurve: number[]
 ): DTWComparisonResult {
+  // 0. 空陣列與極短錄音前置防禦 (5.5 防護：< 15 影格約小於 250ms，杜絕矩陣越界)
+  if (!userVolume || userVolume.length < 15) {
+    return {
+      overallScore: 50,
+      volumeScore: 50,
+      pitchScore: 50,
+      rank: 'A',
+      rankTitle: '再試一次 (TRY AGAIN)',
+      comment: '錄音時間過短或未收錄到足夠聲音，請跟隨節奏大聲模仿！',
+      alignedPathLength: 0,
+    };
+  }
+
   // 1. 將兩組序列統一樣本長度至 64 點進行特徵比較
   const SAMPLE_POINTS = 64;
   const userVolNorm = resampleArray(userVolume, SAMPLE_POINTS);

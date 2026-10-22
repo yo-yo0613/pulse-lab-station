@@ -3,27 +3,65 @@ import { QRCodeCanvas } from 'qrcode.react';
 import type { ScoreResult, PromptScenario } from '../types/speak';
 import { uploadToCloudinary } from '../services/cloudinary';
 import { defaultThemeConfig } from '../config/theme.config';
-import { Download, RotateCcw, CheckCircle, Sparkles, Loader2 } from 'lucide-react';
+import { Download, RotateCcw, CheckCircle, Sparkles, Loader2, Volume2, Square } from 'lucide-react';
 
 interface SpeakExportModalProps {
   scoreResult: ScoreResult;
   scenario: PromptScenario;
   userVolumeSlice: Float32Array;
+  userAudioUrl?: string | null;
   onRestart: () => void;
+  onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
 export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   scoreResult,
   scenario,
   userVolumeSlice,
+  userAudioUrl,
   onRestart,
+  onPlayStateChange,
 }) => {
   const [posterBlobUrl, setPosterBlobUrl] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(true);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(true);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const togglePlayAudio = () => {
+    if (!userAudioUrl) return;
+    if (isPlayingAudio) {
+      audioRef.current?.pause();
+      setIsPlayingAudio(false);
+      onPlayStateChange?.(false);
+    } else {
+      if (!audioRef.current) {
+        audioRef.current = new Audio(userAudioUrl);
+        audioRef.current.onended = () => {
+          setIsPlayingAudio(false);
+          onPlayStateChange?.(false);
+        };
+      } else {
+        audioRef.current.src = userAudioUrl;
+      }
+      onPlayStateChange?.(true); // 觸發靜音閘門 (Defense 7.29)
+      audioRef.current.play().catch(() => {});
+      setIsPlayingAudio(true);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      onPlayStateChange?.(false);
+    };
+  }, [onPlayStateChange]);
 
   // 1. 合成 1080x1920 高清聲音視覺卡片
   const renderCardPoster = useCallback(async (): Promise<string> => {
@@ -113,11 +151,41 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     ctx.font = '700 16px ui-monospace, monospace';
     ctx.fillText(`⚡ ${scenario.emotion}`, cardX + cardW - 305, cardY + 45);
 
-    // 核心大字呈現
+    // 核心大字呈現 (防破版多行自適應換行 - Defense 7.28)
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = '900 68px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`「${scenario.line}」`, W / 2, cardY + 360);
+    const lineText = `「${scenario.line}」`;
+    const maxTextWidth = cardW - 100;
+
+    let fontSize = 64;
+    ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+
+    const words = lineText.split('');
+    const textLines: string[] = [];
+    let curLine = '';
+
+    for (let n = 0; n < words.length; n++) {
+      const testLine = curLine + words[n];
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxTextWidth && n > 0) {
+        textLines.push(curLine);
+        curLine = words[n];
+      } else {
+        curLine = testLine;
+      }
+    }
+    textLines.push(curLine);
+
+    if (textLines.length >= 2) {
+      fontSize = textLines.length >= 3 ? 46 : 54;
+      ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+    }
+
+    const lineHeight = fontSize * 1.35;
+    const startY = cardY + 380 - ((textLines.length - 1) * lineHeight) / 2;
+    for (let k = 0; k < textLines.length; k++) {
+      ctx.fillText(textLines[k], W / 2, startY + k * lineHeight);
+    }
 
     // 聲音波形簽名 (Oscilloscope Signature)
     ctx.strokeStyle = scenario.accentColor;
@@ -372,6 +440,26 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
               )}
             </div>
           </div>
+
+          {/* 原音重現回放按鈕 (A/B 36) */}
+          {userAudioUrl && (
+            <button
+              onClick={togglePlayAudio}
+              className="w-full py-3 bg-white/10 hover:bg-white/15 border border-cyan-400/50 text-cyan-300 font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer rounded-sm active:scale-98"
+            >
+              {isPlayingAudio ? (
+                <>
+                  <Square className="w-4 h-4 fill-current text-rose-400" />
+                  <span>暫停原音播放</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="w-4 h-4 text-cyan-400" />
+                  <span>▶ 聆聽我的現場模仿原音 (PLAY VOICE)</span>
+                </>
+              )}
+            </button>
+          )}
 
           {/* 下載與重試按鈕 */}
           <div className="flex flex-col gap-3">

@@ -9,12 +9,17 @@ export interface UseAudioAnalyzerReturn {
   isCalibrating: boolean;
   noiseFloor: number;
   recordedFrames: number;
+  userAudioBlob: Blob | null;
+  userAudioUrl: string | null;
   getValidRecordings: () => { volume: Float32Array; pitch: Float32Array };
   startRecording: () => void;
   stopRecording: () => void;
   unlockAudio: () => Promise<boolean>;
   muteInput: (mute: boolean) => void;
+  setMuteInput: (muted: boolean) => void;
   calibrateNoiseFloor: () => void;
+  getElapsedHardwareTime: () => number;
+  clearRecordedAudio: () => void;
 }
 
 /**
@@ -88,6 +93,12 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [noiseFloor, setNoiseFloor] = useState(12);
   const [recordedFrames, setRecordedFrames] = useState(0);
+
+  // 原生錄音切片與 URL (A/B 36 原音重現)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [userAudioBlob, setUserAudioBlob] = useState<Blob | null>(null);
+  const [userAudioUrl, setUserAudioUrl] = useState<string | null>(null);
 
   // Web Audio 原生節點
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -235,12 +246,64 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     isRecordingRef.current = true;
     muteInput(false);
     calibrateNoiseFloor();
+
+    // 啟動 MediaRecorder 串流錄製 (A/B 36 原音重現)
+    audioChunksRef.current = [];
+    if (streamRef.current && typeof MediaRecorder !== 'undefined') {
+      try {
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/webm';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = '';
+          }
+        }
+        const options = mimeType ? { mimeType } : undefined;
+        const mr = new MediaRecorder(streamRef.current, options);
+        mr.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        mr.onstop = () => {
+          const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+          setUserAudioBlob(blob);
+          const url = URL.createObjectURL(blob);
+          setUserAudioUrl(url);
+        };
+        mr.start(100);
+        mediaRecorderRef.current = mr;
+      } catch (e) {
+        console.warn('[See How You Speak] MediaRecorder init failed:', e);
+      }
+    }
   }, [muteInput, calibrateNoiseFloor]);
 
   // 結束錄音
   const stopRecording = useCallback(() => {
     isRecordingRef.current = false;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (_) {}
+    }
   }, []);
+
+  // 取得聲卡 DAC 硬體已消耗秒數 (A/B 10 精度 0.1ms 零漂移)
+  const getElapsedHardwareTime = useCallback(() => {
+    if (!audioCtxRef.current || !isRecordingRef.current) return 0;
+    return Math.max(0, audioCtxRef.current.currentTime - recordingStartAudioTimeRef.current);
+  }, []);
+
+  // 釋放記憶體 Blob URL (Defense 7.31 杜絕記憶體洩漏)
+  const clearRecordedAudio = useCallback(() => {
+    if (userAudioUrl) {
+      URL.revokeObjectURL(userAudioUrl);
+    }
+    setUserAudioUrl(null);
+    setUserAudioBlob(null);
+    audioChunksRef.current = [];
+  }, [userAudioUrl]);
 
   // 取得有效切片資料 (傳入 DTW 演算法，防未填滿的 0 破壞分數)
   const getValidRecordings = useCallback(() => {
@@ -396,11 +459,16 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     isCalibrating,
     noiseFloor,
     recordedFrames,
+    userAudioBlob,
+    userAudioUrl,
     getValidRecordings,
     startRecording,
     stopRecording,
     unlockAudio,
     muteInput,
+    setMuteInput: muteInput,
     calibrateNoiseFloor,
+    getElapsedHardwareTime,
+    clearRecordedAudio,
   };
 }

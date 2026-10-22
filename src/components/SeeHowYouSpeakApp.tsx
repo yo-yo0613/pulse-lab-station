@@ -36,15 +36,18 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     audioMetrics,
     isListening,
     noiseFloor,
+    userAudioUrl,
     getValidRecordings,
     startRecording,
     stopRecording,
     unlockAudio,
+    setMuteInput,
     calibrateNoiseFloor,
+    getElapsedHardwareTime,
+    clearRecordedAudio,
   } = useAudioAnalyzer();
 
-  const timerIntervalRef = useRef<number | null>(null);
-  const recordStartTimeRef = useRef<number>(0);
+  const animFrameIdRef = useRef<number | null>(null);
 
   // 1. 展演環境鎖定滾動
   useEffect(() => {
@@ -54,11 +57,16 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     };
   }, []);
 
+  // 影片播放期間軟體靜音麥克風 (Defense 7.22 防喇叭迴音自激)
+  useEffect(() => {
+    setMuteInput(isVideoPlaying);
+  }, [isVideoPlaying, setMuteInput]);
+
   // 2. 結算演算法：錄音結束時由 DTW 比對
   const finishRecording = useCallback(() => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
+    if (animFrameIdRef.current) {
+      cancelAnimationFrame(animFrameIdRef.current);
+      animFrameIdRef.current = null;
     }
     stopRecording();
 
@@ -66,7 +74,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     const { volume, pitch } = getValidRecordings();
     setUserRecordedVolume(volume);
 
-    // 一維 DTW 比對
+    // 一維 DTW 比對 (含 5.5 < 15 影格極短錄音防崩潰保底)
     const dtwResult = compareVoiceDTW(
       volume,
       pitch,
@@ -96,46 +104,50 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setSpeakState('SCORE_ANALYSIS');
   }, [stopRecording, getValidRecordings, selectedScenario]);
 
-  // 3. 啟動模仿錄音倒數計時 (5.0 秒)
+  // 3. 啟動模仿錄音倒數計時 (聲卡 DAC 硬體時鐘 A/B 10 精度 0.1ms 零漂移)
   const handleStartRecording = useCallback(async () => {
     await unlockAudio();
     startRecording();
 
     setRemainingTime(selectedScenario.durationSeconds);
     setSpeakState('RECORDING');
-    recordStartTimeRef.current = performance.now();
 
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
-    timerIntervalRef.current = window.setInterval(() => {
-      const elapsed = (performance.now() - recordStartTimeRef.current) / 1000;
+    const checkCountdown = () => {
+      const elapsed = getElapsedHardwareTime();
       const left = Math.max(0, selectedScenario.durationSeconds - elapsed);
       setRemainingTime(parseFloat(left.toFixed(1)));
 
       if (left <= 0) {
         finishRecording();
+      } else {
+        animFrameIdRef.current = requestAnimationFrame(checkCountdown);
       }
-    }, 50);
-  }, [unlockAudio, startRecording, selectedScenario.durationSeconds, finishRecording]);
+    };
+
+    animFrameIdRef.current = requestAnimationFrame(checkCountdown);
+  }, [unlockAudio, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording]);
 
   // 清除計時器
   useEffect(() => {
     return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     };
   }, []);
 
-  // 重置回到待機首頁
+  // 重置回到待機首頁 (Defense 7.31 清理 Blob 記憶體防洩漏)
   const handleRestart = useCallback(() => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     stopRecording();
+    clearRecordedAudio(); // 釋放 Audio Blob 記憶體
     setScoreResult(null);
     setUserRecordedVolume(new Float32Array(0));
     setRemainingTime(selectedScenario.durationSeconds);
     setSpeakState('LANDING');
     // 自動重新取樣底噪 (A/B 32)
     calibrateNoiseFloor();
-  }, [stopRecording, selectedScenario.durationSeconds, calibrateNoiseFloor]);
+  }, [stopRecording, clearRecordedAudio, selectedScenario.durationSeconds, calibrateNoiseFloor]);
 
   // 4. 全模態輸入事件分發聚合器 (A/B 28 Omni-Input Action Bus)
   const handleOmniAction = useCallback(
@@ -494,8 +506,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         <ScoreAnalysisView
           scoreResult={scoreResult}
           scenario={selectedScenario}
+          userAudioUrl={userAudioUrl}
           onProceedToExport={() => dispatchAction('NEXT_STEP', 'touch')}
           onTryAgain={() => dispatchAction('START_RECORDING', 'touch')}
+          onPlayStateChange={setMuteInput}
         />
       )}
 
@@ -505,7 +519,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           scoreResult={scoreResult}
           scenario={selectedScenario}
           userVolumeSlice={userRecordedVolume}
+          userAudioUrl={userAudioUrl}
           onRestart={() => dispatchAction('RESTART', 'touch')}
+          onPlayStateChange={setMuteInput}
         />
       )}
 

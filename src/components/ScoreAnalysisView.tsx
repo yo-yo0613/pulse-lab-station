@@ -1,21 +1,59 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { ScoreResult, PromptScenario } from '../types/speak';
-import { Award, Zap, Activity, ArrowRight, RotateCcw } from 'lucide-react';
+import { Award, Zap, Activity, ArrowRight, RotateCcw, Volume2, Play, Square } from 'lucide-react';
 
 interface ScoreAnalysisViewProps {
   scoreResult: ScoreResult;
   scenario: PromptScenario;
+  userAudioUrl?: string | null;
   onProceedToExport: () => void;
   onTryAgain: () => void;
+  onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
 export const ScoreAnalysisView: React.FC<ScoreAnalysisViewProps> = ({
   scoreResult,
   scenario,
+  userAudioUrl,
   onProceedToExport,
   onTryAgain,
+  onPlayStateChange,
 }) => {
   const [animatedScore, setAnimatedScore] = useState(0);
+  const [isPlayingUserVoice, setIsPlayingUserVoice] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlayUserVoice = () => {
+    if (!userAudioUrl) return;
+    if (isPlayingUserVoice) {
+      audioRef.current?.pause();
+      setIsPlayingUserVoice(false);
+      onPlayStateChange?.(false);
+    } else {
+      if (!audioRef.current) {
+        audioRef.current = new Audio(userAudioUrl);
+        audioRef.current.onended = () => {
+          setIsPlayingUserVoice(false);
+          onPlayStateChange?.(false);
+        };
+      } else {
+        audioRef.current.src = userAudioUrl;
+      }
+      onPlayStateChange?.(true); // 軟體靜音麥克風防迴音 (Defense 7.29)
+      audioRef.current.play().catch(() => {});
+      setIsPlayingUserVoice(true);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      onPlayStateChange?.(false);
+    };
+  }, [onPlayStateChange]);
 
   // 數字滾動跳動效果
   useEffect(() => {
@@ -134,6 +172,32 @@ export const ScoreAnalysisView: React.FC<ScoreAnalysisViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* 原音回放控制列 (A/B 36 現場笑點與原音重現) */}
+        {userAudioUrl && (
+          <div className="w-full bg-black/50 border border-white/10 p-3 rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold text-white tracking-wider">個人現場原音切片 // ACOUSTIC REPLAY</span>
+            </div>
+            <button
+              onClick={togglePlayUserVoice}
+              className="px-4 py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-300 font-bold text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-95"
+            >
+              {isPlayingUserVoice ? (
+                <>
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>暫停播放</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>聆聽我的原音重現 (PLAY VOICE)</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* 示範台詞回顧 */}
         <div className="text-xs text-zinc-400 border-t border-white/10 pt-3 text-center">

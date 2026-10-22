@@ -53,12 +53,18 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     const widthPercent = 100 + Math.min(50, Math.round(sustainedDuration * 35));
     const letterSpacingPx = Math.min(10, Math.round(sustainedDuration * 7));
 
-    // 2. 父容器注入通用 CSS 變數
+    // 2. 音量物理縮放 (A/B 34：大聲放大 0.85 -> 1.55，小聲微縮，掛載防破版約束)
+    const containerScale = isVoiceActive
+      ? Math.max(0.85, Math.min(1.55, 0.85 + (smoothVolume / 100) * 0.7))
+      : 1.0;
+
+    // 3. 父容器注入通用 CSS 變數與物理縮放
     container.style.setProperty('--v-weight', `${weight}`);
     container.style.setProperty('--v-width', `${widthPercent}%`);
     container.style.setProperty('--v-y-offset', `${pitchYOffset}px`);
     container.style.setProperty('--v-letter-spacing', `${letterSpacingPx}px`);
     container.style.letterSpacing = `${letterSpacingPx}px`;
+    container.style.transform = `scale(${containerScale.toFixed(2)})`;
 
     // 3. 爆發態色差光暈 (Chromatic Aberration)
     const isBurst = smoothVolume > 70;
