@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { SpeakState, ScoreResult, PromptScenario } from '../types/speak';
+import type { OmniActionType, OmniInputSource } from '../types/omniInput';
 import { PROMPT_SCENARIOS } from '../config/speakScenarios';
 import { useAudioAnalyzer } from '../hooks/useAudioAnalyzer';
+import { useOmniInput } from '../hooks/useOmniInput';
 import { KineticTypography } from './KineticTypography';
 import { VoiceVisualizer3D } from './VoiceVisualizer3D';
 import { DynamicMediaOverlay } from './DynamicMediaOverlay';
 import { PromptVideoView } from './PromptVideoView';
 import { ScoreAnalysisView } from './ScoreAnalysisView';
 import { SpeakExportModal } from './SpeakExportModal';
+import { MaintainerDrawer } from './MaintainerDrawer';
 import { compareVoiceDTW } from '../utils/audioDTW';
-import { Mic, Sparkles, Square, ArrowRight } from 'lucide-react';
+import { handleMaintainerTap } from '../utils/kioskLock';
+import { Mic, Sparkles, Square, ArrowRight, Radio } from 'lucide-react';
 
 interface SeeHowYouSpeakAppProps {
   onSwitchMode?: () => void;
@@ -22,6 +26,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [userRecordedVolume, setUserRecordedVolume] = useState<Float32Array>(new Float32Array(0));
 
+  // 維護者抽屜與全模態控制狀態
+  const [isMaintainerOpen, setIsMaintainerOpen] = useState(false);
+  const [enableVoiceVad, setEnableVoiceVad] = useState(true);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+
   // 音訊分析器 hook
   const {
     audioMetrics,
@@ -31,6 +40,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     startRecording,
     stopRecording,
     unlockAudio,
+    calibrateNoiseFloor,
   } = useAudioAnalyzer();
 
   const timerIntervalRef = useRef<number | null>(null);
@@ -123,17 +133,89 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setUserRecordedVolume(new Float32Array(0));
     setRemainingTime(selectedScenario.durationSeconds);
     setSpeakState('LANDING');
-  }, [stopRecording, selectedScenario.durationSeconds]);
+    // 自動重新取樣底噪 (A/B 32)
+    calibrateNoiseFloor();
+  }, [stopRecording, selectedScenario.durationSeconds, calibrateNoiseFloor]);
+
+  // 4. 全模態輸入事件分發聚合器 (A/B 28 Omni-Input Action Bus)
+  const handleOmniAction = useCallback(
+    (action: OmniActionType, _source: OmniInputSource, payload?: any) => {
+      if (action === 'TOGGLE_REMOTE_DRAWER') {
+        setIsMaintainerOpen((prev) => !prev);
+        return;
+      }
+
+      if (action === 'RESTART') {
+        handleRestart();
+        return;
+      }
+
+      if (action === 'SELECT_SCENARIO') {
+        if (typeof payload === 'number' && PROMPT_SCENARIOS[payload]) {
+          setSelectedScenario(PROMPT_SCENARIOS[payload]);
+        }
+        return;
+      }
+
+      if (action === 'FORCE_SUBMIT') {
+        if (speakState === 'RECORDING') {
+          finishRecording();
+        }
+        return;
+      }
+
+      if (action === 'START_RECORDING') {
+        if (speakState === 'PROMPT_VIDEO' || speakState === 'LANDING') {
+          handleStartRecording();
+        }
+        return;
+      }
+
+      if (action === 'PREV_STEP') {
+        if (speakState === 'PROMPT_VIDEO' || speakState === 'SCORE_ANALYSIS') {
+          setSpeakState('LANDING');
+        }
+        return;
+      }
+
+      if (action === 'NEXT_STEP') {
+        if (speakState === 'LANDING') {
+          unlockAudio().then(() => {
+            setSpeakState('PROMPT_VIDEO');
+          });
+        } else if (speakState === 'PROMPT_VIDEO') {
+          handleStartRecording();
+        } else if (speakState === 'RECORDING') {
+          finishRecording();
+        } else if (speakState === 'SCORE_ANALYSIS') {
+          setSpeakState('EXPORT_CARD');
+        } else if (speakState === 'EXPORT_CARD') {
+          handleRestart();
+        }
+      }
+    },
+    [speakState, handleRestart, handleStartRecording, finishRecording, unlockAudio]
+  );
+
+  const { dispatchAction, lastActionSource, watchdogRemaining } = useOmniInput({
+    currentState: speakState,
+    audioMetrics,
+    voiceTriggerLocked: isVideoPlaying,
+    onAction: handleOmniAction,
+    enableVoiceVad,
+  });
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#080808] text-white font-mono select-none">
       {/* 頂部全域狀態 HUD 列 */}
       <header className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-6 py-4 pointer-events-auto bg-gradient-to-b from-black/80 via-black/40 to-transparent">
-        {/* 左側 LOGO & 模式指示 */}
+        {/* 左側 LOGO & 模式指示 (連續點擊 5 次開啟維護者暗樁抽屜) */}
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center font-black text-black text-sm tracking-tighter"
+            onClick={() => handleMaintainerTap(() => setIsMaintainerOpen(true))}
+            className="w-9 h-9 rounded-lg flex items-center justify-center font-black text-black text-sm tracking-tighter cursor-pointer active:scale-95 transition-transform"
             style={{ backgroundColor: selectedScenario.accentColor }}
+            title="連續點擊 5 次開啟維護者暗樁抽屜"
           >
             SPK
           </div>
@@ -143,7 +225,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 SEE HOW YOU SPEAK
               </span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70 border border-white/15">
-                v2.0 MVP
+                v2.4 OMNI
               </span>
             </div>
             <p className="text-[10px] text-zinc-400 font-mono tracking-widest">
@@ -168,6 +250,16 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
         {/* 右側切換與麥克風狀態 */}
         <div className="flex items-center gap-3">
+          {/* 維護者暗樁快捷按鈕 */}
+          <button
+            onClick={() => setIsMaintainerOpen(true)}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 hover:bg-white/10 border border-white/10 text-[11px] font-mono text-zinc-300 hover:text-white transition-all cursor-pointer"
+            title="開啟全模態控制與遙控抽屜 (快速鍵 M)"
+          >
+            <Radio className="w-3.5 h-3.5 text-cyan-400" />
+            <span>全模態控制</span>
+          </button>
+
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 border border-white/10 text-[11px] font-mono">
             <Mic
               className={`w-3.5 h-3.5 ${
@@ -175,7 +267,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               }`}
             />
             <span className="text-zinc-300">
-              {isListening ? '音訊監聽中' : 'MIC 待命'}
+              {isListening ? (enableVoiceVad ? '聲控待命中' : '收音中') : 'MIC 待命'}
             </span>
           </div>
 
@@ -194,7 +286,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       {/* 狀態 1：LANDING (新媒體展演沉浸式主視覺畫面) */}
       {speakState === 'LANDING' && (
         <div
-          onClick={() => setSpeakState('PROMPT_VIDEO')}
+          onClick={() => dispatchAction('NEXT_STEP', 'touch')}
           className="relative w-full h-full flex flex-col justify-between p-8 md:p-12 z-20 cursor-pointer overflow-hidden transition-all duration-700 select-none group"
         >
           {/* 展場背景流體光暈與聲學共振核心 */}
@@ -217,7 +309,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             + [POSTER SYNTHESIS: 1080x1920 9:16]
           </div>
           <div className="absolute bottom-24 right-8 text-[11px] font-mono text-zinc-600 text-right tracking-widest hidden md:block pointer-events-none">
-            + [SLOT ARCHITECTURE: READY FOR TD/AE]<br />
+            + [OMNI-INPUT: TOUCH / VAD / CLICKER / REMOTE]<br />
             + [STATUS: 60FPS IDLE MONITORING]
           </div>
 
@@ -272,7 +364,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                   }}
                 >
                   <Sparkles className="w-4 h-4 animate-spin" />
-                  <span>點擊任意處開始體驗 // TOUCH TO ENTER</span>
+                  <span>
+                    {enableVoiceVad ? '開口說話或點擊任意處開始' : '點擊任意處開始體驗'} // ENTER
+                  </span>
                   <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
                 </div>
               </div>
@@ -288,12 +382,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               SELECT PRESET
             </span>
             <div className="flex-1 flex gap-1.5 overflow-x-auto">
-              {PROMPT_SCENARIOS.map((sc) => {
+              {PROMPT_SCENARIOS.map((sc, idx) => {
                 const isActive = sc.id === selectedScenario.id;
                 return (
                   <button
                     key={sc.id}
-                    onClick={() => setSelectedScenario(sc)}
+                    onClick={() => dispatchAction('SELECT_SCENARIO', 'touch', idx)}
                     className={`flex-1 min-w-[110px] py-2 px-2.5 rounded-lg text-left font-mono text-[11px] transition-all cursor-pointer border ${
                       isActive
                         ? 'bg-white/15 border-white/60 text-white shadow-lg'
@@ -320,8 +414,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         <PromptVideoView
           scenario={selectedScenario}
           scenarios={PROMPT_SCENARIOS}
-          onSelectScenario={setSelectedScenario}
-          onReadyToRecord={handleStartRecording}
+          onSelectScenario={(sc) => {
+            const idx = PROMPT_SCENARIOS.findIndex((s) => s.id === sc.id);
+            dispatchAction('SELECT_SCENARIO', 'touch', idx >= 0 ? idx : 0);
+          }}
+          onReadyToRecord={() => dispatchAction('START_RECORDING', 'touch')}
+          onPlayStateChange={setIsVideoPlaying}
         />
       )}
 
@@ -381,7 +479,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           {/* 底部控制器 */}
           <div className="relative z-30 flex items-center justify-center pb-8">
             <button
-              onClick={finishRecording}
+              onClick={() => dispatchAction('FORCE_SUBMIT', 'touch')}
               className="px-6 py-3 rounded-full bg-rose-500/20 hover:bg-rose-500/40 border border-rose-500 text-rose-400 hover:text-white font-mono text-xs font-bold tracking-wider flex items-center gap-2 transition-all cursor-pointer backdrop-blur-md active:scale-95"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
@@ -396,8 +494,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         <ScoreAnalysisView
           scoreResult={scoreResult}
           scenario={selectedScenario}
-          onProceedToExport={() => setSpeakState('EXPORT_CARD')}
-          onTryAgain={handleStartRecording}
+          onProceedToExport={() => dispatchAction('NEXT_STEP', 'touch')}
+          onTryAgain={() => dispatchAction('START_RECORDING', 'touch')}
         />
       )}
 
@@ -407,9 +505,21 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           scoreResult={scoreResult}
           scenario={selectedScenario}
           userVolumeSlice={userRecordedVolume}
-          onRestart={handleRestart}
+          onRestart={() => dispatchAction('RESTART', 'touch')}
         />
       )}
+
+      {/* 維護者暗樁調試抽屜 (連續 5 次點擊 Logo 或按 M 鍵開啟) */}
+      <MaintainerDrawer
+        isOpen={isMaintainerOpen}
+        onClose={() => setIsMaintainerOpen(false)}
+        noiseFloor={noiseFloor}
+        onCalibrateNoise={calibrateNoiseFloor}
+        lastActionSource={lastActionSource}
+        watchdogRemaining={watchdogRemaining}
+        enableVoiceVad={enableVoiceVad}
+        onToggleVoiceVad={() => setEnableVoiceVad((prev) => !prev)}
+      />
     </div>
   );
 };

@@ -14,8 +14,19 @@ import { Sliders, Mic } from 'lucide-react';
 import { SharePage } from './components/SharePage';
 import { SeeHowYouSpeakApp } from './components/SeeHowYouSpeakApp';
 import { SpeakSharePage } from './components/SpeakSharePage';
+import { MobileWebRemote } from './components/MobileWebRemote';
 
 export function App() {
+  // 檢查是否為展場掌上型手機遙控器頁面 (?remote=true, /remote, #/remote)
+  const isRemoteView = () => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.search.includes('remote=true') ||
+      window.location.pathname.startsWith('/remote') ||
+      window.location.hash.startsWith('#/remote')
+    );
+  };
+
   // 檢查是否為手機掃碼《See How You Speak》分享頁面
   const isSpeakShareView = () => {
     if (typeof window === 'undefined') return false;
@@ -35,6 +46,10 @@ export function App() {
       window.location.search.includes('share=true')
     );
   };
+
+  if (isRemoteView()) {
+    return <MobileWebRemote />;
+  }
 
   if (isSpeakShareView()) {
     return <SpeakSharePage />;

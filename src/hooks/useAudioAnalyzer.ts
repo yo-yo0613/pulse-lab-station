@@ -14,6 +14,7 @@ export interface UseAudioAnalyzerReturn {
   stopRecording: () => void;
   unlockAudio: () => Promise<boolean>;
   muteInput: (mute: boolean) => void;
+  calibrateNoiseFloor: () => void;
 }
 
 /**
@@ -400,5 +401,6 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     stopRecording,
     unlockAudio,
     muteInput,
+    calibrateNoiseFloor,
   };
 }

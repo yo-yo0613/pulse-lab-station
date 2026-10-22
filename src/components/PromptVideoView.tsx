@@ -7,6 +7,7 @@ interface PromptVideoViewProps {
   onReadyToRecord: () => void;
   onSelectScenario: (scenario: PromptScenario) => void;
   scenarios: PromptScenario[];
+  onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
 export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
@@ -14,13 +15,15 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   onReadyToRecord,
   onSelectScenario,
   scenarios,
+  onPlayStateChange,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playProgress, setPlayProgress] = useState(0);
 
-  // 模擬播放示範台詞與黃金聲波
+  // 模擬播放示範台詞與黃金聲波 (播放期間通知父層鎖定聲控，防喇叭自激迴圈 - 7.22)
   useEffect(() => {
     setIsPlaying(true);
+    onPlayStateChange?.(true);
     setPlayProgress(0);
 
     const interval = setInterval(() => {
@@ -28,23 +31,29 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
         if (prev >= 100) {
           clearInterval(interval);
           setIsPlaying(false);
+          onPlayStateChange?.(false);
           return 100;
         }
         return prev + 3; // 約 3.3 秒播完
       });
     }, 100);
 
-    return () => clearInterval(interval);
-  }, [scenario.id]);
+    return () => {
+      clearInterval(interval);
+      onPlayStateChange?.(false);
+    };
+  }, [scenario.id, onPlayStateChange]);
 
   const handleReplay = () => {
     setIsPlaying(true);
+    onPlayStateChange?.(true);
     setPlayProgress(0);
     const interval = setInterval(() => {
       setPlayProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
           setIsPlaying(false);
+          onPlayStateChange?.(false);
           return 100;
         }
         return prev + 3;
