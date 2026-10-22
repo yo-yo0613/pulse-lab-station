@@ -5,8 +5,8 @@
 * **核心提案組員**：林妤安、柯佩岑、林科余（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **專案主題界定**：本規格書**100% 專注於「聲音視覺化 / 語音模仿動態字體 / 沉浸互動展演」**，與同課堂另一組由劉芯妤等同學發表之「慧眼（HuiYan）」穿戴式手套控制器提案完全區隔，請評圖與展示時明確辨識。
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / 本地聲學 DNA 編碼)
-* **架構決策原則**：32 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v2.4.1 (Omni-Input & Offline-First Sound-DNA Master PRD)
+* **架構決策原則**：37 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v2.5.0 (Acoustic Physics & Replay Master PRD)
 * **最後更新**：2026 年 10 月 22 日
 
 ---
@@ -248,6 +248,28 @@ flowchart TD
 * **方案 A（陷阱）**：前一位觀眾體驗完畢走人，畫面永久定格在海報成果頁。後續路過民眾不知道這是一台互動裝置，以為是故障海報看板不敢碰觸。
 * **方案 B（最佳實踐，100% 採用）**：**階梯式看門狗無人自動退回機制 (Tiered Watchdog Timer)**。在成果評分頁若 10 秒無操作自動進入海報頁；海報頁若 20 秒無人點擊或掃碼，自動啟動 5 秒倒數並無縫退回 `LANDING` 迎賓待命狀態，同時自動重新校準現場底噪，達成 7x24 小時無人值守自動運轉。
 
+### 🎨 組別九：動態字體語感物理、原音重現與成果格式組 (A/B 33 ~ A/B 37)
+
+#### 【A/B 33】 動態成果輸出格式：前端純 JS 轉 GIF vs 輕量活體動態海報 (Living Web Poster) + 原生硬體加速錄影雙模
+* **方案 A（陷阱）**：在前端瀏覽器使用傳統 JS GIF 庫（如 `gifshot`/`omggif`）將 90 幀 1080x1920 畫面逐幀進行調色盤量化壓縮成 .gif。展場筆電 CPU 瞬間飆至 100%，機台卡死轉圈 12~15 秒，導出檔案高達 18MB，且 GIF 僅支援 256 色，發光漸層嚴重破色，展場地下室弱網直接超時下載失敗。
+* **方案 B（最佳實踐，100% 採用）**：**輕量活體動態海報 (Living Web Poster) + 原生硬體加速錄製雙模**。手機掃碼後以原生 Canvas 根據聲波參數即時驅動「活體聲波流動海報」，0 秒加載；同時提供 0.05 秒高清靜態 PNG 導出，以及調用瀏覽器原生硬體加速 `MediaRecorder`（H.264/WebM，1677 萬全彩且體積僅 1.2MB），兼顧極致流暢與社群分享！
+
+#### 【A/B 34】 音量大小之字體物理視覺映射：單一字重變粗 vs 雙維度物理縮放 (Font Scale + Weight Dual-Mapping)
+* **方案 A（陷阱）**：音量僅單純映射到 `font-weight` (100~900)。使用者用力大喊時字體僅微微加粗，視覺上沒有「震撼爆發」的體積膨脹感；輕聲細語時也沒有退縮感，缺乏情緒張力。
+* **方案 B（最佳實踐，100% 採用）**：**雙維度飽和物理縮放 (Font Scale + Weight Dual-Mapping with Safe Clamping)**。音量透過 Sigmoid 曲線同時映射 `font-weight` (100 -> 900) 與 `transform: scale(0.85 -> 1.75)`。嘶吼時文字瞬間放大炸裂並伴隨色差光暈，細語時字體微縮內斂，具備極致的情緒體積感，並掛載自動邊界防破版約束。
+
+#### 【A/B 35】 語感長短音物理延展：固定字距寬度 vs 持音累加器 (Sustained Vowel Extender) 與瞬態咬字回彈 (Staccato Snap)
+* **方案 A（陷阱）**：不論發長音還是短促音，字形比例死板不變，完全失去說話語感的真實反饋。
+* **方案 B（最佳實踐，100% 採用）**：**持音累加器 (Sustained Extender) + 瞬態咬字回彈 (Staccato Snap)**。當人聲持續持音超過 150ms，`sustainedDuration` 累加驅動 `font-stretch` (75% -> 150%) 與字距 `letter-spacing` 橫向滑順拉長，文字像橡皮筋般延展；當檢測到急速爆發但持音 < 80ms 的短音時，立即啟動 35ms 阻尼回彈與緊湊窄體，乾脆俐落。
+
+#### 【A/B 36】 體驗者原音重現回放架構：即錄即丟 (Zero Audio Persist) vs 記憶體切片緩衝池 (In-Memory Audio Blob Replay)
+* **方案 A（陷阱）**：錄音僅分析 FFT 頻譜數值，未保留音訊波形二進位檔案。結算與海報頁無法回放聲音，體驗者無法聽到自己剛才滑稽或震撼的模仿原音，喪失 80% 的現場傳播笑點。
+* **方案 B（最佳實踐，100% 採用）**：**記憶體切片音訊緩衝池 (In-Memory Audio Blob Replay)**。在錄音 5 秒期間，前端 `MediaRecorder` 同步將 PCM/WebM 串流保留在記憶體中，結算頁與海報頁提供「▶️ 聆聽我的原音」與「原聲 vs 模仿 AB 對比」按鈕，0 外網依賴本機秒播！
+
+#### 【A/B 37】 手機掃碼帶走個人原音：純文字參數放棄聲音 vs 輕量 60KB Opus 雲端同步 + 斷網無縫降級
+* **方案 A（陷阱）**：試圖將整段 80KB 音訊轉成 Base64 硬塞進 QR Code，導致 QR Code 點陣密密麻麻如雜訊圖，手機相機 100% 無法識別掃描。
+* **方案 B（最佳實踐，100% 採用）**：**輕量 60KB Opus 雲端背景同步 + 斷網無縫降級雙保險**。有外網時，機台背景 0.3 秒上傳這段 60KB 語音至雲端，手機端附帶音訊播放器可一鍵存檔；展場斷網時，自動降級為聲學 DNA 參數海報，機台本體依然能無限次回放聲音，兩端皆萬無一失！
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -305,7 +327,7 @@ export interface AudioMetrics {
 
 ---
 
-## ⚠️ 七、 現場實戰老手視角：26 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
+## ⚠️ 七、 現場實戰老手視角：31 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
 
 ### 7.1 可變字體 (Variable Fonts) 本地離線快取陷阱
 * **隱性災難**：依賴 Google Fonts 等外網 CDN，展場斷網時字體降級為新細明體，形變動畫全毀。
@@ -410,6 +432,26 @@ export interface AudioMetrics {
 ### 7.26 零碰觸模式下「長時間無滑鼠移動被作業系統判定為休眠」 (OS Idle Screen Sleep)
 * **隱性災難**：在全聲控或手機遙控模式下，實體展機沒有任何實體滑鼠或鍵盤移動事件，Windows 或 macOS 系統在 5~10 分鐘後自動觸發螢幕保護程式或直接關閉螢幕黑屏，展場直接斷電感。
 * **避坑防線**：除了調用現代瀏覽器的 `navigator.wakeLock.request('screen')` 之外，系統每當 FSM 進行任何一次狀態跳轉，便以 JS 向 DOM 發射微小的虛擬活性心跳（Heartbeat Synthetic Pointer Event），並在展演指南中提供 Windows / Mac 一鍵關閉休眠的 Power Management 設定檔指令。
+
+### 7.27 前端純 JS 轉 GIF 導致主執行緒凍結 15 秒與記憶體爆表 (GIF Palette Quantization Main-Thread Lock)
+* **隱性災難**：若採納設計端「直接導出動態 GIF」的要求，在前端使用傳統 JS GIF 編碼庫，每個像素要計算 NeuQuant/Octree 顏色量化矩陣。90 幀 1080x1920 畫面會讓瀏覽器主執行緒凍結 12~15 秒，無響應跳出「網頁沒有回應」，記憶體暴衝 1.2GB 導致平板或筆電當場崩潰白屏。
+* **避坑防線**：堅決杜絕主執行緒 GIF 編碼，改採「Living Web Poster（Canvas 活體海報）+ 原生硬體加速編碼 WebM/MP4」，0 主執行緒負擔，秒級產出，色彩為 1677 萬全彩且體積縮小 80%。
+
+### 7.28 嘶吼過猛導致文字物理縮放「破版橫向衝出螢幕或海報框外」 (Unconstrained Font Scale Overflow)
+* **隱性災難**：使用者對著麥克風大聲嘶吼時，文字尺寸隨著音量放大（Scale 1.75x），多字數台詞（如「絕對不會向這個世界認輸！給我聽清楚！」）會直接橫向衝出螢幕與海報框，字體兩端被硬生生截斷，成果海報破版難看。
+* **避坑防線**：建立「容器寬度自適應防撞幾何計算（Auto-Fit Safe Bounding Box）」：文字外層容器掛載 `max-width: 90%; word-break: break-word;`，並在 JS 根據字數即時計算基準字級，當音量 scale 放大超過邊界閾值時，自動限制上限並緊縮行距，確保文字永遠鎖定在視覺框核心。
+
+### 7.29 結算頁喇叭回放個人原音時「再次被麥克風收錄引發評分竄改」 (Voice Playback Acoustic Loop)
+* **隱性災難**：體驗者在結算頁按下「▶️ 聆聽我的原音重現」，喇叭大聲播放他剛才的錄音，此時若麥克風仍處於活躍採樣狀態，播放出來的聲音又被 Web Audio 收錄，甚至干擾下一次體驗者的底噪校準。
+* **避坑防線**：在調用 `audio.play()` 播放原音回放的瞬間，系統強制向 Web Audio 音訊管線發送 `muteInput(true)`（硬性靜音麥克風 GainNode 50ms），音訊播畢後透過 `onended` 事件才安全解鎖收音。
+
+### 7.30 iOS Safari 對 WebM/Opus 音訊編碼的「靜音相容性黑洞」 (iOS Safari WebM Audio Black Hole)
+* **隱性災難**：大機台 Chrome 錄製的音訊格式預設為 `audio/webm;codecs=opus`，民眾用 iPhone 掃碼在 Safari 或 LINE Webview 開啟時，Safari 核心底層不原生支援 WebM 音訊解碼，導致手機端點擊播放完全無聲。
+* **避坑防線**：在機台端調用 `MediaRecorder.isTypeSupported('audio/mp4')` 或在錄製時封裝為通用的 PCM WAV / MP3 容器，或在手機端採用 Web Audio 解碼器降級支援，確保 iPhone 與 Android 100% 皆能清晰出聲。
+
+### 7.31 連續 100 位體驗者錄音造成「瀏覽器 Blob 記憶體洩漏與展機閃退」 (Blob Object URL Memory Leak)
+* **隱性災難**：每一位體驗者錄製的 5 秒音訊都透過 `URL.createObjectURL(blob)` 生成記憶體指針，若在回到 `LANDING` 迎賓待機時未顯式調用 `URL.revokeObjectURL()`，展覽連續運作 3 天、接待數百人後，記憶體洩漏累積達數 GB，導致展機瀏覽器無預警崩潰閃退。
+* **避坑防線**：建立嚴格的「生命週期資源回收閥門」：在 FSM 狀態跳轉回 `LANDING` 或看門狗自動退回時，自動執行 `URL.revokeObjectURL(audioBlobUrl)` 與 `blob = null`，記憶體常駐永遠控制在 150MB 以下。
 
 ---
 
