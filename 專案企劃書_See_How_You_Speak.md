@@ -5,8 +5,8 @@
 * **核心提案組員**：林妤安、柯佩岑、林科余（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **專案主題界定**：本規格書**100% 專注於「聲音視覺化 / 語音模仿動態字體 / 沉浸互動展演」**，與同課堂另一組由劉芯妤等同學發表之「慧眼（HuiYan）」穿戴式手套控制器提案完全區隔，請評圖與展示時明確辨識。
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / 本地聲學 DNA 編碼)
-* **架構決策原則**：37 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v2.5.0 (Acoustic Physics & Replay Master PRD)
+* **架構決策原則**：42 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v2.6.0 (Audio Demo TTS & Dual-Track Master PRD)
 * **最後更新**：2026 年 10 月 22 日
 
 ---
@@ -88,9 +88,9 @@ flowchart TD
 
 ---
 
-## ⚔️ 四、 37 大工業級展演 A/B 技術決策（全數鎖定方案 B）
+## ⚔️ 四、 42 大工業級展演 A/B 技術決策（全數鎖定方案 B）
 
-在真實商場與展會實機環境中，工程團隊與架構評審必須面對 37 個致命的物理與架構選擇題，**本專案全數嚴格執行「方案 B」最佳實踐**：
+在真實商場與展會實機環境中，工程團隊與架構評審必須面對 42 個致命的物理與架構選擇題，**本專案全數嚴格執行「方案 B」最佳實踐**：
 
 ### 🎨 組別一：渲染與視覺效能組
 
@@ -270,6 +270,28 @@ flowchart TD
 * **方案 A（陷阱）**：試圖將整段 80KB 音訊轉成 Base64 硬塞進 QR Code，導致 QR Code 點陣密密麻麻如雜訊圖，手機相機 100% 無法識別掃描。
 * **方案 B（最佳實踐，100% 採用）**：**輕量 60KB Opus 雲端背景同步 + 斷網無縫降級雙保險**。有外網時，機台背景 0.3 秒上傳這段 60KB 語音至雲端，手機端附帶音訊播放器可一鍵存檔；展場斷網時，自動降級為聲學 DNA 參數海報，機台本體依然能無限次回放聲音，兩端皆萬無一失！
 
+### 🔊 組別十：示範語音聲學導引、TTS 語音合成與原聲資材熱插拔組 (A/B 38 ~ A/B 42)
+
+#### 【A/B 38】 示範發音雙軌引擎選型：純外部 MP3 依賴 vs 離線 Web Speech API TTS + MP3 雙軌保險 (Dual-Track Audio Prompt)
+* **方案 A（陷阱）**：純依賴美術組手動剪輯提供 MP3。一旦美術夥伴未及時交稿、檔名打錯或路徑 404，示範頁面瞬間變成「啞巴無聲動畫」，體驗者看著台詞完全不知道該如何發音。
+* **方案 B（最佳實踐，100% 採用）**：**雙軌熱插拔自癒音訊架構 (Dual-Track Audio Prompt)**。系統優先檢測 `/public/audio/prompts/` 內是否有該情境之實體原聲 MP3；若有則播放極具戲劇張力之電影/動漫原聲；若無則 0 秒自動無縫降級為瀏覽器原生 `window.speechSynthesis`（Web Speech TTS），依據情境動態調整 Pitch (0.6~1.4) 與 Rate (0.8~1.3)，達成 100% 斷網離線保底發聲！
+
+#### 【A/B 39】 示範語音播放時之自動播放策略（Autoplay Policy）：頁面加載立即強制播放 vs 手勢轉場解鎖音訊上下文後接續發聲
+* **方案 A（陷阱）**：從 `LANDING` 進入 `PROMPT_VIDEO` 時試圖直接呼叫 `audio.play()` 或 `synth.speak()`，因未與使用者手勢直接綁定，被現代瀏覽器安全性原則（Autoplay Policy）判定為未經授權靜音並報出 `DOMException: play() failed` 致命錯誤。
+* **方案 B（最佳實踐，100% 採用）**：**手勢轉場授權透傳架構 (Gesture-Unlocked Audio Handoff)**。在 `LANDING` 迎賓頁使用者點擊螢幕或開口觸發進入的瞬間，同步解鎖 AudioContext 與 SpeechSynthesis 的音訊管道；切換至示範頁時直接沿用已授權之管道播放示範語音，0 警告、0 靜默。
+
+#### 【A/B 40】 示範語音與視覺波形跳動之時間軸同步：假定固定長度動畫 vs 音訊播放即時頻譜分析 (Live Audio Analyser Sync)
+* **方案 A（陷阱）**：底部的示範波形長條圖用 CSS `keyframes` 寫死跑 3.3 秒固定進度。若台詞較長（如仿生人台詞需唸 4.8 秒），畫面進度條已經跑完且顯示「COMPLETED」，喇叭裡的語音卻還在唸，音畫嚴重脫節。
+* **方案 B（最佳實踐，100% 採用）**：**真實音訊時長綁定與 Analyser 節點實時頻譜同步 (Real-time Audio Analyser Node & Duration Binding)**。若播放實體 MP3，將其接入 Web Audio Analyser 即時萃取真實頻譜高度；若走 TTS，透過 `utterance.onboundary` 與真實時長動態縮放進度條，達成 100% 聲畫物理同步。
+
+#### 【A/B 41】 示範聲音播放時之展場麥克風狀態控制：全開監聽 vs 雙重硬性靜音閘門 (Hardware Gain Zero & VAD Lockout)
+* **方案 A（陷阱）**：在機台大聲播放示範語音時，麥克風通道依舊保持活躍。機台外接喇叭播放的原音直接衝入麥克風，底噪自適應算法被破壞，甚至誤觸發「使用者已開口」而提前中斷示範。
+* **方案 B（最佳實踐，100% 採用）**：**雙重硬性靜音閘門 (Dual Acoustic Gate Lock)**。在示範語音啟動的第 0 毫秒，麥克風硬體 GainNode 降為 0，且 VAD 語音活動檢測完全鎖死；直到語音播畢、螢幕顯示「換你模仿」後，才平滑解鎖收音，徹底物理切斷迴音自激。
+
+#### 【A/B 42】 多次切換情境之音訊中斷處理：疊音混雜 vs 單一語音控制器互斥中止 (`speechSynthesis.cancel() & audio.pause()`)
+* **方案 A（陷阱）**：體驗者在示範頁快速連續點選不同的情境 Tab，前一個情境的示範語音未停止，新情境又開播，多個聲音重疊如菜市場，系統音訊通道崩潰。
+* **方案 B（最佳實踐，100% 採用）**：**單一語音播放控制器互斥閥 (Exclusive Audio Controller)**。切換情境或離開頁面時，強制執行 `speechSynthesis.cancel()` 與 `audio.pause()`、`audio.currentTime = 0`，永遠保持單一聲音通道乾淨。
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -333,7 +355,7 @@ export interface AudioMetrics {
 
 ---
 
-## ⚠️ 七、 現場實戰老手視角：31 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
+## ⚠️ 七、 現場實戰老手視角：36 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
 
 ### 7.1 可變字體 (Variable Fonts) 本地離線快取陷阱
 * **隱性災難**：依賴 Google Fonts 等外網 CDN，展場斷網時字體降級為新細明體，形變動畫全毀。
@@ -458,6 +480,26 @@ export interface AudioMetrics {
 ### 7.31 連續 100 位體驗者錄音造成「瀏覽器 Blob 記憶體洩漏與展機閃退」 (Blob Object URL Memory Leak)
 * **隱性災難**：每一位體驗者錄製的 5 秒音訊都透過 `URL.createObjectURL(blob)` 生成記憶體指針，若在回到 `LANDING` 迎賓待機時未顯式調用 `URL.revokeObjectURL()`，展覽連續運作 3 天、接待數百人後，記憶體洩漏累積達數 GB，導致展機瀏覽器無預警崩潰閃退。
 * **避坑防線**：建立嚴格的「生命週期資源回收閥門」：在 FSM 狀態跳轉回 `LANDING` 或看門狗自動退回時，自動執行 `URL.revokeObjectURL(audioBlobUrl)` 與 `blob = null`，記憶體常駐永遠控制在 150MB 以下。
+
+### 7.32 Web Speech API 在特定 Windows / Linux 系統上的「缺少中文語音庫缺語系災難」 (TTS Voice Pack Absence)
+* **隱性災難**：部分純英文版 Windows 展機或精簡版 Chrome 沒有安裝本機中文語音套件（`zh-TW`），呼叫 `speechSynthesis.speak()` 時因找不到可用語音庫直接靜默或報錯，示範語音完全啞巴。
+* **避坑防線**：在 TTS 初始化時遍歷 `speechSynthesis.getVoices()` 建立階梯式語言回退清單：優先匹配 `zh-TW` -> 次選 `zh-HK`/`zh-CN` -> 若系統完全無中文語音庫，自動調用預設短音或直接播放內置示範 MP3，保證 100% 絕對發聲不靜默。
+
+### 7.33 Chrome 核心 Web Speech API 播放超過 15 秒「垃圾回收靜默卡死 Bug」 (TTS Silent Hang Bug)
+* **隱性災難**：Chromium 核心存在長達 8 年的已知 Bug：當 `SpeechSynthesisUtterance` 實例未被全域強引用時，播放超過 10~15 秒會被 V8 垃圾回收器提前 GC 回收，導致示範語音唸到一半突然無預警中斷，且後續所有 TTS 調用全部掛死。
+* **避坑防線**：在組件內部將當前 `utterance` 實例賦予 `window.__activeUtterance` 全域強引用，並設置長語句暫停重啟心跳閥門，徹底繞過 Chromium 核心的 GC 假死缺陷。
+
+### 7.34 展場 80dB 吵雜環境下示範語音「被背景噪音淹沒」之清晰度劣化 (Acoustic Masking in Public Space)
+* **隱性災難**：展演現場人聲鼎沸（背景噪音約 75~80dB），展示螢幕或筆電內建喇叭功率不足，示範語音如同細語，觀眾就算貼在螢幕前也聽不清楚語調示範。
+* **避坑防線**：在 Web Audio 示範音訊鏈路上掛載專屬語音動態壓縮器（`DynamicsCompressor`），提振 1kHz~4kHz 人聲可懂度頻段，並在畫面上提供高對比「🔊 點擊重新聆聽示範」重播按鈕；展演指引強制建議現場外接至少 15W 指向性喇叭或耳筒。
+
+### 7.35 體驗者急躁「在示範音效尚未播完即強按開始模仿」引發音軌串音競爭 (Skip Demo Race Condition)
+* **隱性災難**：急性子觀眾不等示範語音唸完，直接猛點「我聽懂了，換我模仿」，若示範音效仍在背景播放，而麥克風已開始錄音，喇叭播出的示範音會被直接錄進體驗者的錄音中，嚴重扭曲 DTW 比對評分。
+* **避坑防線**：在執行 `handleStartRecording` 的第 0 毫秒，強制向音訊引擎發送全域靜音與中斷指令：`speechSynthesis.cancel()`、`demoAudio.pause()` 並重置指針，確保錄音開始時喇叭 100% 絕對純淨。
+
+### 7.36 示範 MP3 遠端加載延遲導致「畫面進度條先跑完、聲音才剛開播」的嚴重音畫不同步 (MP3 Preload Delay Drift)
+* **隱性災難**：若實體原片示範 MP3 未設預載，在展場地下室弱網下需 1.2 秒才載入完成，此時畫面上的波形柱已經跑過大半，聲音才突然冒出來，音畫嚴重錯位破壞沉浸感。
+* **避坑防線**：在 `LANDING` 迎賓待機階段，背景 PWA Service Worker 與 `<link rel="preload">` 自動將 4 大情境之示範短音（總量 < 800KB）提前預載至本地 RAM 記憶體，進入示範頁時 0ms 秒播，達成絕對音畫物理同步。
 
 ---
 
