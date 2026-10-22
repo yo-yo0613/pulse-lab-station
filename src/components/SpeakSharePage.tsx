@@ -18,6 +18,7 @@ interface SpeakShareParams {
   ts: string;
   imageUrl?: string;
   waveSamples?: number[];
+  pitchSamples?: number[];
 }
 
 export const SpeakSharePage: React.FC = () => {
@@ -55,6 +56,7 @@ export const SpeakSharePage: React.FC = () => {
     const tsParam = query.get('ts');
     const imgParam = query.get('img');
     const wParam = query.get('w');
+    const pParam = query.get('p');
 
     let cleanImg: string | undefined = undefined;
     if (imgParam) {
@@ -72,6 +74,13 @@ export const SpeakSharePage: React.FC = () => {
       } catch (_) {}
     }
 
+    let parsedPitch: number[] | undefined = undefined;
+    if (pParam) {
+      try {
+        parsedPitch = pParam.split(',').map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+      } catch (_) {}
+    }
+
     setParams({
       score: scoreParam ? parseInt(scoreParam, 10) : 95,
       rank: rankParam ? decodeURIComponent(rankParam) : 'SSS',
@@ -82,6 +91,7 @@ export const SpeakSharePage: React.FC = () => {
       ts: tsParam ? decodeURIComponent(tsParam) : new Date().toLocaleDateString('zh-TW'),
       imageUrl: cleanImg,
       waveSamples: parsedWave,
+      pitchSamples: parsedPitch,
     });
   }, []);
 
@@ -159,11 +169,109 @@ export const SpeakSharePage: React.FC = () => {
     ctx.font = '700 24px ui-monospace, monospace';
     ctx.fillText(`⚡ 情緒場景: ${scenario.title} (${scenario.emotion})`, cardX + 40, cardY + 70);
 
-    // 核心大字呈現
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '900 68px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`「${params.line}」`, W / 2, cardY + 380);
+    // 核心大字呈現 (A/B 48 ~ A/B 51 逐字元聲學幾何排版)
+    const lineText = `「${params.line}」`;
+    const chars = Array.from(lineText);
+    const N = chars.length;
+    const maxLineWidth = cardW - 120;
+    const baseFontSize = N <= 12 ? 68 : N <= 18 ? 56 : 46;
+
+    const glyphs = chars.map((char, i) => {
+      const isPunc = ['「', '」', '，', '。', '！', '？', '…', ' '].includes(char);
+      const progress = N > 1 ? i / (N - 1) : 0;
+      const vLen = params.waveSamples ? params.waveSamples.length : 0;
+      const vIdx = vLen > 0 ? Math.min(vLen - 1, Math.floor(progress * vLen)) : 0;
+      const vol = params.waveSamples ? params.waveSamples[vIdx] || 0 : 50;
+      const pLen = params.pitchSamples ? params.pitchSamples.length : 0;
+      const pIdx = pLen > 0 ? Math.min(pLen - 1, Math.floor(progress * pLen)) : 0;
+      const pVal = params.pitchSamples ? (params.pitchSamples[pIdx] || 20) / 100 : 0.2;
+
+      if (isPunc) {
+        ctx.font = `700 ${baseFontSize}px system-ui, -apple-system, sans-serif`;
+        const rawW = ctx.measureText(char).width;
+        return { char, fontSize: baseFontSize, weight: 700, scaleX: 1.0, yOffset: 0, effectiveWidth: rawW + 4, isBurst: false };
+      }
+
+      let fontSize = baseFontSize;
+      let weight = 600;
+      let isBurst = false;
+
+      if (vol > 65) {
+        fontSize = Math.round(baseFontSize * (1.25 + ((vol - 65) / 35) * 0.45));
+        weight = 900;
+        isBurst = true;
+      } else if (vol > 25) {
+        fontSize = Math.round(baseFontSize * (0.95 + ((vol - 25) / 40) * 0.3));
+        weight = 700;
+      } else {
+        fontSize = Math.round(baseFontSize * Math.max(0.72, 0.72 + (vol / 25) * 0.23));
+        weight = 400;
+      }
+
+      let scaleX = 1.0;
+      if (vol > 45 && (i >= N - 7 || vol > 60)) {
+        scaleX = Math.min(2.1, 1.05 + (vol / 100) * 1.05);
+      }
+
+      const yOffset = Math.round((pVal - 0.25) * -42);
+      ctx.font = `${weight} ${fontSize}px system-ui, -apple-system, sans-serif`;
+      const rawW = ctx.measureText(char).width;
+      const effectiveWidth = Math.round(rawW * scaleX + (scaleX > 1.2 ? 14 : 6));
+
+      return { char, fontSize, weight, scaleX, yOffset, effectiveWidth, isBurst };
+    });
+
+    const lines: typeof glyphs[] = [];
+    let curLine: typeof glyphs = [];
+    let curLineWidth = 0;
+
+    for (let k = 0; k < glyphs.length; k++) {
+      const g = glyphs[k];
+      if (curLineWidth + g.effectiveWidth > maxLineWidth && curLine.length > 0) {
+        lines.push(curLine);
+        curLine = [g];
+        curLineWidth = g.effectiveWidth;
+      } else {
+        curLine.push(g);
+        curLineWidth += g.effectiveWidth;
+      }
+    }
+    if (curLine.length > 0) lines.push(curLine);
+
+    const lineSpacing = baseFontSize * 1.65;
+    const totalLinesHeight = (lines.length - 1) * lineSpacing;
+    const startY = cardY + 380 - totalLinesHeight / 2;
+
+    lines.forEach((lineGlyphs, lineIdx) => {
+      const lineWidth = lineGlyphs.reduce((acc, g) => acc + g.effectiveWidth, 0);
+      let curX = cardX + (cardW - lineWidth) / 2;
+      const lineCenterY = startY + lineIdx * lineSpacing;
+
+      lineGlyphs.forEach((g) => {
+        const cx = curX + g.effectiveWidth / 2;
+        const cy = lineCenterY + g.yOffset;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(g.scaleX, 1.0);
+        ctx.font = `${g.weight} ${g.fontSize}px system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        if (g.isBurst) {
+          ctx.fillStyle = '#00F0FF';
+          ctx.fillText(g.char, -4, 0);
+          ctx.fillStyle = '#FF0055';
+          ctx.fillText(g.char, 4, 0);
+        }
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(g.char, 0, 0);
+        ctx.restore();
+
+        curX += g.effectiveWidth;
+      });
+    });
 
     // 聲音波形簽名 (若有離線採樣數據則繪製真實聲波，否則模擬)
     ctx.strokeStyle = scenario.accentColor;

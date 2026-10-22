@@ -25,6 +25,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const [remainingTime, setRemainingTime] = useState<number>(5.0);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [userRecordedVolume, setUserRecordedVolume] = useState<Float32Array>(new Float32Array(0));
+  const [userRecordedPitch, setUserRecordedPitch] = useState<Float32Array>(new Float32Array(0));
 
   // 維護者抽屜與全模態控制狀態
   const [isMaintainerOpen, setIsMaintainerOpen] = useState(false);
@@ -73,6 +74,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     // 取得截斷後的有效錄音長度
     const { volume, pitch } = getValidRecordings();
     setUserRecordedVolume(volume);
+    setUserRecordedPitch(pitch);
 
     const nowStr = new Date().toLocaleDateString('zh-TW', {
       year: 'numeric',
@@ -177,6 +179,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     clearRecordedAudio(); // 釋放 Audio Blob 記憶體
     setScoreResult(null);
     setUserRecordedVolume(new Float32Array(0));
+    setUserRecordedPitch(new Float32Array(0));
     setRemainingTime(selectedScenario.durationSeconds);
     setSpeakState('LANDING');
     // 自動重新取樣底噪 (A/B 32)
@@ -557,6 +560,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           scoreResult={scoreResult}
           scenario={selectedScenario}
           userVolumeSlice={userRecordedVolume}
+          userPitchSlice={userRecordedPitch}
           userAudioUrl={userAudioUrl}
           onRestart={() => dispatchAction('RESTART', 'touch')}
           onPlayStateChange={setMuteInput}

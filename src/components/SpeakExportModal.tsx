@@ -3,21 +3,33 @@ import { QRCodeCanvas } from 'qrcode.react';
 import type { ScoreResult, PromptScenario } from '../types/speak';
 import { uploadToCloudinary } from '../services/cloudinary';
 import { defaultThemeConfig } from '../config/theme.config';
-import { Download, RotateCcw, CheckCircle, Sparkles, Loader2, Volume2, Square } from 'lucide-react';
+import { Download, RotateCcw, CheckCircle, Sparkles, Volume2, Square } from 'lucide-react';
 
 interface SpeakExportModalProps {
   scoreResult: ScoreResult;
   scenario: PromptScenario;
   userVolumeSlice: Float32Array;
+  userPitchSlice?: Float32Array;
   userAudioUrl?: string | null;
   onRestart: () => void;
   onPlayStateChange?: (isPlaying: boolean) => void;
+}
+
+interface GlyphInfo {
+  char: string;
+  fontSize: number;
+  weight: number;
+  scaleX: number;
+  yOffset: number;
+  effectiveWidth: number;
+  isBurst: boolean;
 }
 
 export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   scoreResult,
   scenario,
   userVolumeSlice,
+  userPitchSlice,
   userAudioUrl,
   onRestart,
   onPlayStateChange,
@@ -27,9 +39,20 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevBlobUrlRef = useRef<string>('');
+
+  // 0. 安全釋放舊 Blob 記憶體 (Defense 7.31 & 7.45)
+  const safeSetBlobUrl = useCallback((newUrl: string) => {
+    if (prevBlobUrlRef.current && prevBlobUrlRef.current !== newUrl) {
+      URL.revokeObjectURL(prevBlobUrlRef.current);
+    }
+    prevBlobUrlRef.current = newUrl;
+    setPosterBlobUrl(newUrl);
+  }, []);
 
   const togglePlayAudio = () => {
     if (!userAudioUrl) return;
@@ -61,12 +84,15 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     };
 
     onPlayStateChange?.(true);
-    audio.play().then(() => {
-      setIsPlayingAudio(true);
-    }).catch(() => {
-      setIsPlayingAudio(false);
-      onPlayStateChange?.(false);
-    });
+    audio
+      .play()
+      .then(() => {
+        setIsPlayingAudio(true);
+      })
+      .catch(() => {
+        setIsPlayingAudio(false);
+        onPlayStateChange?.(false);
+      });
   };
 
   useEffect(() => {
@@ -76,10 +102,14 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         audioRef.current = null;
       }
       onPlayStateChange?.(false);
+      if (prevBlobUrlRef.current) {
+        URL.revokeObjectURL(prevBlobUrlRef.current);
+        prevBlobUrlRef.current = '';
+      }
     };
   }, [onPlayStateChange]);
 
-  // 1. 合成 1080x1920 高清聲音視覺卡片
+  // 1. 合成 1080x1920 高清聲態海報 (A/B 48 逐字元聲學排版引擎)
   const renderCardPoster = useCallback(async (): Promise<string> => {
     let canvas = offscreenCanvasRef.current;
     if (!canvas) {
@@ -117,16 +147,18 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     // 頂部標題
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '900 52px ui-monospace, monospace';
-    ctx.fillText('SEE HOW YOU SPEAK', 70, 130);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('SEE HOW YOU SPEAK', 70, 100);
 
     ctx.fillStyle = scenario.themeColor;
     ctx.font = '700 24px ui-monospace, monospace';
-    ctx.fillText('// 看你怎麼說話：聲音視覺化實驗室', 70, 175);
+    ctx.fillText('// 看你怎麼說話：聲音視覺化實驗室', 70, 165);
 
     ctx.fillStyle = '#888888';
     ctx.font = '400 20px ui-monospace, monospace';
-    ctx.fillText(`VERIFIED: #${scoreResult.verificationCode}`, W - 360, 130);
-    ctx.fillText(scoreResult.timestamp, W - 360, 165);
+    ctx.fillText(`VERIFIED: #${scoreResult.verificationCode}`, W - 360, 105);
+    ctx.fillText(scoreResult.timestamp, W - 360, 140);
 
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 2;
@@ -167,41 +199,139 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     ctx.font = '700 16px ui-monospace, monospace';
     ctx.fillText(`⚡ ${scenario.emotion}`, cardX + cardW - 305, cardY + 45);
 
-    // 核心大字呈現 (防破版多行自適應換行 - Defense 7.28)
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'center';
+    // ========================================================
+    // 核心演算法：逐字元聲學排版引擎 (A/B 48, A/B 49, A/B 50, A/B 51)
+    // 徹底消滅死板字體，大吼變大、微弱變小、長音拉寬、色差爆裂！
+    // ========================================================
     const lineText = `「${scenario.line}」`;
-    const maxTextWidth = cardW - 100;
+    const chars = Array.from(lineText);
+    const N = chars.length;
+    const maxLineWidth = cardW - 120; // 兩側留白
 
-    let fontSize = 64;
-    ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+    // 依據字數自適應基準字號 (7.44 短字數 vs 長字數補償)
+    let baseFontSize = N <= 12 ? 68 : N <= 18 ? 56 : 46;
 
-    const words = lineText.split('');
-    const textLines: string[] = [];
-    let curLine = '';
+    const glyphs: GlyphInfo[] = chars.map((char, i) => {
+      const isPunc = ['「', '」', '，', '。', '！', '？', '…', ' '].includes(char);
+      const progress = N > 1 ? i / (N - 1) : 0;
+      const vLen = userVolumeSlice.length;
+      const vIdx = vLen > 0 ? Math.min(vLen - 1, Math.floor(progress * vLen)) : 0;
+      const vol = userVolumeSlice[vIdx] || 0;
+      const pVal =
+        userPitchSlice && userPitchSlice.length > 0
+          ? userPitchSlice[vIdx] || 0.2
+          : 0.2;
 
-    for (let n = 0; n < words.length; n++) {
-      const testLine = curLine + words[n];
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxTextWidth && n > 0) {
-        textLines.push(curLine);
-        curLine = words[n];
+      if (isPunc) {
+        ctx.font = `700 ${baseFontSize}px system-ui, -apple-system, sans-serif`;
+        const rawW = ctx.measureText(char).width;
+        return {
+          char,
+          fontSize: baseFontSize,
+          weight: 700,
+          scaleX: 1.0,
+          yOffset: 0,
+          effectiveWidth: rawW + 4,
+          isBurst: false,
+        };
+      }
+
+      // 1. 音量對應字級與字重 (大聲 1.45x 炸裂加粗，小聲 0.72x 微縮)
+      let fontSize = baseFontSize;
+      let weight = 600;
+      let isBurst = false;
+
+      if (vol > 65) {
+        fontSize = Math.round(baseFontSize * (1.25 + ((vol - 65) / 35) * 0.45));
+        weight = 900;
+        isBurst = true;
+      } else if (vol > 25) {
+        fontSize = Math.round(baseFontSize * (0.95 + ((vol - 25) / 40) * 0.3));
+        weight = 700;
       } else {
-        curLine = testLine;
+        fontSize = Math.round(baseFontSize * Math.max(0.72, 0.72 + (vol / 25) * 0.23));
+        weight = 400;
+      }
+
+      // 2. 拉長音對應幾何延展 (A/B 43: 後段尾音或高音量處 scaleX 1.4 ~ 2.1x 橫向拉長)
+      let scaleX = 1.0;
+      if (vol > 45 && (i >= N - 7 || vol > 60)) {
+        scaleX = Math.min(2.1, 1.05 + (vol / 100) * 1.05);
+      }
+
+      // 3. 音高對應 Y 軸浮動波浪
+      const yOffset = Math.round((pVal - 0.25) * -42);
+
+      // 4. 動態包圍盒寬度計算 (A/B 49)
+      ctx.font = `${weight} ${fontSize}px system-ui, -apple-system, sans-serif`;
+      const rawW = ctx.measureText(char).width;
+      const effectiveWidth = Math.round(rawW * scaleX + (scaleX > 1.2 ? 14 : 6));
+
+      return {
+        char,
+        fontSize,
+        weight,
+        scaleX,
+        yOffset,
+        effectiveWidth,
+        isBurst,
+      };
+    });
+
+    // 5. 動態自適應多行折行 (A/B 50 防文字衝出海報邊界)
+    const lines: GlyphInfo[][] = [];
+    let curLine: GlyphInfo[] = [];
+    let curLineWidth = 0;
+
+    for (let k = 0; k < glyphs.length; k++) {
+      const g = glyphs[k];
+      if (curLineWidth + g.effectiveWidth > maxLineWidth && curLine.length > 0) {
+        lines.push(curLine);
+        curLine = [g];
+        curLineWidth = g.effectiveWidth;
+      } else {
+        curLine.push(g);
+        curLineWidth += g.effectiveWidth;
       }
     }
-    textLines.push(curLine);
+    if (curLine.length > 0) lines.push(curLine);
 
-    if (textLines.length >= 2) {
-      fontSize = textLines.length >= 3 ? 46 : 54;
-      ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    }
+    // 6. 逐行居中繪製與色差故障投影 (A/B 51)
+    const lineSpacing = baseFontSize * 1.65;
+    const totalLinesHeight = (lines.length - 1) * lineSpacing;
+    const startY = cardY + 380 - totalLinesHeight / 2;
 
-    const lineHeight = fontSize * 1.35;
-    const startY = cardY + 380 - ((textLines.length - 1) * lineHeight) / 2;
-    for (let k = 0; k < textLines.length; k++) {
-      ctx.fillText(textLines[k], W / 2, startY + k * lineHeight);
-    }
+    lines.forEach((lineGlyphs, lineIdx) => {
+      const lineWidth = lineGlyphs.reduce((acc, g) => acc + g.effectiveWidth, 0);
+      let curX = cardX + (cardW - lineWidth) / 2;
+      const lineCenterY = startY + lineIdx * lineSpacing;
+
+      lineGlyphs.forEach((g) => {
+        const cx = curX + g.effectiveWidth / 2;
+        const cy = lineCenterY + g.yOffset;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(g.scaleX, 1.0);
+        ctx.font = `${g.weight} ${g.fontSize}px system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // 聲學爆發色差故障陰影 (A/B 51)
+        if (g.isBurst) {
+          ctx.fillStyle = '#00F0FF';
+          ctx.fillText(g.char, -4, 0);
+          ctx.fillStyle = '#FF0055';
+          ctx.fillText(g.char, 4, 0);
+        }
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(g.char, 0, 0);
+        ctx.restore();
+
+        curX += g.effectiveWidth;
+      });
+    });
 
     // 聲音波形簽名 (Oscilloscope Signature)
     ctx.strokeStyle = scenario.accentColor;
@@ -221,6 +351,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
 
     ctx.fillStyle = '#888888';
     ctx.font = '600 18px ui-monospace, monospace';
+    ctx.textAlign = 'center';
     ctx.fillText('// 實錄聲音波形簽名 (REAL-TIME ACOUSTIC SIGNATURE)', W / 2, cardY + 800);
     ctx.textAlign = 'left';
 
@@ -282,9 +413,9 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         resolve(URL.createObjectURL(blob));
       }, 'image/png');
     });
-  }, [scenario, scoreResult, userVolumeSlice]);
+  }, [scenario, scoreResult, userVolumeSlice, userPitchSlice]);
 
-  // 2. 生成分享 QR Code 網址 (帶上 Cloudinary 圖片連結)
+  // 2. 生成分享 QR Code 網址 (A/B 52 帶上聲學時域特徵切片 w, p)
   const getQrPayload = useCallback(() => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const params = new URLSearchParams({
@@ -299,21 +430,25 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     if (uploadedImageUrl) {
       params.set('img', uploadedImageUrl);
     } else if (userVolumeSlice && userVolumeSlice.length > 0) {
-      // 離線降級：取 16 個代表性聲波特徵點壓入 URL (A/B 24 方案 B)
-      const samples: number[] = [];
+      // 離線降級：取 16 個代表性音量 (w) 與音高 (p) 特徵點壓入 URL (A/B 24 / A/B 52)
+      const samplesW: number[] = [];
+      const samplesP: number[] = [];
       const step = Math.max(1, Math.floor(userVolumeSlice.length / 16));
       for (let i = 0; i < 16; i++) {
         const idx = Math.min(userVolumeSlice.length - 1, i * step);
-        samples.push(Math.round(userVolumeSlice[idx] || 0));
+        samplesW.push(Math.round(userVolumeSlice[idx] || 0));
+        const pNorm = userPitchSlice ? userPitchSlice[idx] || 0.2 : 0.2;
+        samplesP.push(Math.round(pNorm * 100));
       }
-      params.set('w', samples.join(','));
+      params.set('w', samplesW.join(','));
+      params.set('p', samplesP.join(','));
     }
     return `${origin}/share-speak?${params.toString()}`;
-  }, [scoreResult, scenario, uploadedImageUrl, userVolumeSlice]);
+  }, [scoreResult, scenario, uploadedImageUrl, userVolumeSlice, userPitchSlice]);
 
   const qrCodePayload = getQrPayload();
 
-  // 3. 初始合成海報與非同步 Cloudinary 上傳
+  // 3. 初始合成海報與非同步 Cloudinary 上傳 (Defense 7.31 防重複洩漏)
   useEffect(() => {
     let isMounted = true;
 
@@ -321,7 +456,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       setIsGenerating(true);
       const url = await renderCardPoster();
       if (!isMounted) return;
-      setPosterBlobUrl(url);
+      safeSetBlobUrl(url);
       setIsGenerating(false);
 
       // 上傳至 Cloudinary
@@ -348,18 +483,9 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [renderCardPoster]);
+  }, [renderCardPoster, safeSetBlobUrl]);
 
-  // 當 uploadedImageUrl 就緒時，重新繪製帶有完整圖片參數的 QR Code 海報
-  useEffect(() => {
-    if (!isUploading) {
-      renderCardPoster().then((url) => {
-        if (url) setPosterBlobUrl(url);
-      });
-    }
-  }, [isUploading, uploadedImageUrl, renderCardPoster]);
-
-  // 下載海報
+  // 下載海報 (Defense 7.46 本機 Blob 優先秒級下載)
   const handleDownload = () => {
     if (!posterBlobUrl) return;
     const a = document.createElement('a');
@@ -387,11 +513,11 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       <div className="relative flex flex-col lg:flex-row items-center gap-8 max-w-5xl w-full my-auto">
         {/* 左側：9:16 海報預覽 */}
         <div className="relative w-[320px] sm:w-[360px] h-[570px] sm:h-[640px] bg-[#0A0A0A] border border-white/20 shadow-[0_0_50px_rgba(255,0,85,0.25)] flex items-center justify-center overflow-hidden">
-          {isGenerating || isUploading ? (
+          {isGenerating ? (
             <div className="flex flex-col items-center gap-3 text-white/60">
               <Sparkles className="w-8 h-8 text-[#FF0055] animate-spin" />
               <span className="text-xs tracking-widest text-[#00F0FF]">
-                {isUploading ? 'SYNCING CLOUD CARD...' : 'SYNTHESIZING CARD...'}
+                SYNTHESIZING ACOUSTIC CARD...
               </span>
             </div>
           ) : (
@@ -408,89 +534,85 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         {/* 右側：掃碼與控制項 */}
         <div className="flex flex-col gap-6 text-white max-w-md w-full">
           <div>
-            <div className="flex items-center gap-2 text-xs text-[#00F0FF] tracking-widest mb-1">
+            <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">
               <CheckCircle className="w-4 h-4" />
-              <span>VOICE CERTIFICATE GENERATED</span>
+              <span>Voice Certificate Generated</span>
             </div>
-            <h2 className="text-3xl font-black tracking-tight">KINETIC VOICE CARD</h2>
-            <p className="text-xs text-white/40 tracking-wider">
+            <h1 className="text-3xl font-black tracking-tight">KINETIC VOICE CARD</h1>
+            <p className="text-xs text-zinc-400 mt-1">
               VERIFICATION CODE: #{scoreResult.verificationCode}
             </p>
           </div>
 
-          {/* 掃碼卡片 */}
-          <div className="flex items-center gap-4 bg-white/5 border border-white/10 p-3.5 rounded-sm">
-            <div className="bg-white p-1 rounded-sm shrink-0 min-w-[88px] min-h-[88px] flex items-center justify-center">
-              {isUploading ? (
-                <div className="w-[80px] h-[80px] bg-[#0A0A0A] border border-[#00F0FF]/40 flex flex-col items-center justify-center gap-1.5 p-1 text-center">
-                  <Loader2 className="w-5 h-5 text-[#00F0FF] animate-spin" />
-                  <span className="text-[9px] text-[#00F0FF] font-bold">同步雲端中</span>
-                </div>
-              ) : (
-                <QRCodeCanvas
-                  value={qrCodePayload}
-                  size={80}
-                  level="M"
-                  marginSize={1}
-                  fgColor="#000000"
-                  bgColor="#FFFFFF"
-                />
-              )}
+          {/* QR Code 掃碼區域 */}
+          <div className="bg-zinc-950/80 border border-white/10 p-5 rounded-2xl flex items-center gap-5 backdrop-blur-md">
+            <div className="bg-white p-2.5 rounded-xl shrink-0 shadow-lg">
+              <QRCodeCanvas
+                value={qrCodePayload}
+                size={110}
+                level="M"
+                marginSize={1}
+                fgColor="#000000"
+                bgColor="#FFFFFF"
+              />
             </div>
-            <div className="flex flex-col gap-1 min-w-0">
-              <span className="text-xs font-bold text-white tracking-wider flex items-center gap-1.5">
-                📱 手機掃碼取得專屬聲音卡片
-              </span>
-              {isUploading ? (
-                <span className="text-[11px] text-[#00F0FF] flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  <span>高清海報同步至雲端中...</span>
-                </span>
-              ) : uploadedImageUrl ? (
-                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3 shrink-0" />
-                  <span>雲端聲音卡片已就緒！掃碼即存</span>
-                </span>
-              ) : (
-                <span className="text-[11px] text-white/50">即時儲存海報與分享至社群</span>
-              )}
+            <div className="flex flex-col gap-1.5 text-xs text-zinc-300">
+              <p className="font-bold text-white flex items-center gap-1.5">
+                <span>📱 手機掃碼取得專屬聲音卡片</span>
+              </p>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                {isUploading ? (
+                  <span className="text-amber-400 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 animate-spin" />
+                    正在同步雲端圖床與聲學 DNA...
+                  </span>
+                ) : uploadedImageUrl ? (
+                  <span className="text-emerald-400">✅ 雲端聲音卡片已就緒！掃碼保存</span>
+                ) : (
+                  <span>⚡ 離線聲學 DNA 模式：手機秒繪高清海報</span>
+                )}
+              </p>
             </div>
           </div>
 
-          {/* 原音重現回放按鈕 (A/B 36) */}
+          {/* 原音回放播放器 (A/B 36 原音重現) */}
           {userAudioUrl && (
             <button
               onClick={togglePlayAudio}
-              className="w-full py-3 bg-white/10 hover:bg-white/15 border border-cyan-400/50 text-cyan-300 font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 transition-all cursor-pointer rounded-sm active:scale-98"
+              className={`w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider flex items-center justify-center gap-2.5 transition-all cursor-pointer border ${
+                isPlayingAudio
+                  ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.3)] animate-pulse'
+                  : 'bg-white/5 border-white/15 text-zinc-300 hover:text-white hover:border-white/30 hover:bg-white/10'
+              }`}
             >
               {isPlayingAudio ? (
                 <>
-                  <Square className="w-4 h-4 fill-current text-rose-400" />
-                  <span>暫停原音播放</span>
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                  <span>⏹ 停止播放原音 (STOP)</span>
                 </>
               ) : (
                 <>
-                  <Volume2 className="w-4 h-4 text-cyan-400" />
-                  <span>▶ 聆聽我的現場模仿原音 (PLAY VOICE)</span>
+                  <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>▶️ 聆聽我的現場模仿原音 (PLAY VOICE)</span>
                 </>
               )}
             </button>
           )}
 
-          {/* 下載與重試按鈕 */}
+          {/* 下載與重玩按鈕 */}
           <div className="flex flex-col gap-3">
             <button
               onClick={handleDownload}
-              disabled={isGenerating || !posterBlobUrl}
-              className="w-full py-4 bg-[#00F0FF] hover:bg-[#00d0df] text-black font-black text-sm tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,240,255,0.4)] transition-transform active:scale-98 cursor-pointer disabled:opacity-50"
+              disabled={isGenerating}
+              className="w-full py-3.5 rounded-xl font-black text-xs sm:text-sm tracking-widest uppercase flex items-center justify-center gap-2 transition-all cursor-pointer bg-[#00F0FF] hover:bg-[#33F3FF] text-black shadow-[0_0_25px_rgba(0,240,255,0.4)] active:scale-95 disabled:opacity-50"
             >
-              <Download className="w-5 h-5" />
+              <Download className="w-4 h-4" />
               <span>下載海報 PNG (DOWNLOAD POSTER)</span>
             </button>
 
             <button
               onClick={onRestart}
-              className="w-full py-3 bg-transparent border border-white/30 hover:border-white text-white font-bold text-xs tracking-widest uppercase flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className="w-full py-3 rounded-xl font-bold text-xs tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 hover:border-white/20 active:scale-95"
             >
               <RotateCcw className="w-4 h-4" />
               <span>換個台詞再玩一次 (TRY ANOTHER LINE)</span>
