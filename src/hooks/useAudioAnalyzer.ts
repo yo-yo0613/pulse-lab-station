@@ -131,12 +131,12 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
   // 錄音硬體時鐘
   const recordingStartAudioTimeRef = useRef<number>(0);
 
-  // 暫停/恢復輸入 (示範影片播放時靜音麥克風以防喇叭迴音自激)
+  // 暫停/恢復輸入 (示範影片播放時靜音麥克風以防喇叭迴音自激，A/B 45 第 0 毫秒強制賦值)
   const muteInput = useCallback((mute: boolean) => {
     if (micGainRef.current && audioCtxRef.current) {
       const now = audioCtxRef.current.currentTime;
       micGainRef.current.gain.cancelScheduledValues(now);
-      micGainRef.current.gain.linearRampToValueAtTime(mute ? 0 : 1, now + 0.05);
+      micGainRef.current.gain.setValueAtTime(mute ? 0 : 1, now);
     }
   }, []);
 
@@ -242,6 +242,11 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
 
     if (audioCtxRef.current) {
       recordingStartAudioTimeRef.current = audioCtxRef.current.currentTime;
+      // 強制在第 0 毫秒解鎖麥克風硬體 GainNode 回到 1.0 (A/B 45 全域強制解鎖，杜絕 VOL: 0% 卡死)
+      if (micGainRef.current) {
+        micGainRef.current.gain.cancelScheduledValues(audioCtxRef.current.currentTime);
+        micGainRef.current.gain.setValueAtTime(1.0, audioCtxRef.current.currentTime);
+      }
     }
     isRecordingRef.current = true;
     muteInput(false);
@@ -389,7 +394,9 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
       smoothVolumeRef.current += (rawVol - smoothVolumeRef.current) * alpha;
       smoothPitchNormRef.current += (pitchNorm - smoothPitchNormRef.current) * (1 - Math.exp(-12 * dt));
 
-      const isVoiceActive = smoothVolumeRef.current > noiseFloor;
+      // A/B 46: 雙重語音活性檢測 (Dual VAD) - 結合人聲音高區間 (85~350Hz)，防止底噪過高卡死
+      const hasHumanVoice = pitchHz >= 85 && pitchHz <= 350 && (rawVol > 6 || smoothVolumeRef.current > noiseFloor * 0.75);
+      const isVoiceActive = smoothVolumeRef.current > noiseFloor || hasHumanVoice;
 
       // 個人化指數滑動動態音高基準線 (A/B 14 方案 B)
       if (isVoiceActive) {
@@ -403,10 +410,10 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
       const deltaPitch = pitchHz - (pitchBaselineRef.current || 150);
       const pitchYOffset = isVoiceActive ? Math.round(-Math.tanh(deltaPitch / 60) * 28) : 0;
 
-      // 拉長音雙條件滑動窗口判定 (A/B 15 方案 B + 隱性坑點 7.11 信噪比防線)
-      if (isVoiceActive && smoothVolumeRef.current > noiseFloor + 8) {
+      // 拉長音雙條件滑動窗口判定 (A/B 15, A/B 43 方案 B：加速響應，只要音高穩定即累加)
+      if (isVoiceActive && (smoothVolumeRef.current > noiseFloor * 0.8 || hasHumanVoice)) {
         recentPitchesRef.current.push(pitchHz);
-        if (recentPitchesRef.current.length > 12) recentPitchesRef.current.shift();
+        if (recentPitchesRef.current.length > 10) recentPitchesRef.current.shift();
 
         let sumP = 0;
         for (let i = 0; i < recentPitchesRef.current.length; i++) sumP += recentPitchesRef.current[i];
@@ -419,16 +426,16 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
         const stdP = Math.sqrt(varP / recentPitchesRef.current.length);
         const relativeStd = meanP > 0 ? stdP / meanP : 1;
 
-        if (relativeStd < 0.10 && recentPitchesRef.current.length >= 6) {
-          sustainedDurationRef.current = Math.min(1.5, sustainedDurationRef.current + dt);
+        if (relativeStd < 0.12 && recentPitchesRef.current.length >= 4) {
+          sustainedDurationRef.current = Math.min(1.5, sustainedDurationRef.current + dt * 1.6);
         } else {
-          sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
+          sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.0);
         }
       } else {
         recentPitchesRef.current = [];
-        sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 3.5);
+        sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 3.0);
       }
-      const isSustained = sustainedDurationRef.current > 0.2;
+      const isSustained = sustainedDurationRef.current > 0.15;
 
       // 6. 錄音狀態下記錄至定長環形緩衝池 (0 GC 開銷)
       if (isRecordingRef.current && headPointerRef.current < BUFFER_CAPACITY) {

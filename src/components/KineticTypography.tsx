@@ -14,8 +14,8 @@ interface KineticTypographyProps {
  * 保證字重在 [100, 900] 安全區間，大吼極限加粗但不破面
  */
 function mapVolumeToWeight(vol: number, noiseFloor: number): number {
-  const volEff = Math.max(0, vol - noiseFloor);
-  const sigmoid = 1 / (1 + Math.exp(-(volEff - 26) / 10));
+  const volEff = Math.max(0, vol - noiseFloor * 0.7);
+  const sigmoid = 1 / (1 + Math.exp(-(volEff - 24) / 10));
   const weight = Math.round(100 + sigmoid * 800);
   return Math.max(100, Math.min(900, weight));
 }
@@ -30,10 +30,10 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const charsRef = useRef<(HTMLSpanElement | null)[]>([]);
 
-  // 將文字拆分為字元陣列 (逐音節分頻變形)
+  // 將文字拆分為字元陣列 (逐字元 GPU 幾何延展)
   const chars = Array.from(text);
 
-  // 60fps 透過 Direct CSS Variables 驅動，0 次 React Re-render
+  // 60fps 透過 Direct CSS & GPU Transforms 驅動，0 次 React Re-render
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -49,25 +49,28 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     const weight = mapVolumeToWeight(smoothVolume, noiseFloor);
 
-    // 1. 拉長音橫向延展 (A/B 15 & A/B 35：長音延展 1.0 -> 1.65x，短音緊縮 0.88x)
-    const stretchRatio = isStaccato
-      ? 0.88
-      : 1.0 + Math.min(0.65, sustainedDuration * 0.45);
-    const widthPercent = Math.round(stretchRatio * 100);
-    const letterSpacingPx = isStaccato
-      ? -1
-      : Math.min(14, Math.round(sustainedDuration * 9));
+    // 1. 繁體中文字元 GPU scaleX 極限橫向拉長 (A/B 43 方案 B: 突破中文字體無 wdth 軸缺陷)
+    // 持音時 scaleX 狂暴延展至 2.35x；短音時 scaleX 緊縮至 0.75x
+    const sustainedWidth = isStaccato
+      ? 0.75
+      : 1.0 + Math.min(1.35, sustainedDuration * 0.95);
+    const widthPercent = Math.round(sustainedWidth * 100);
 
-    // 2. 音量物理縮放 (A/B 34：大聲放大 1.6x 炸裂，細語微縮 0.82x)
+    // 2. 彈性字距間隙補償 (A/B 47: 防文字橫向重疊打架)
+    const letterSpacingPx = isStaccato
+      ? -2
+      : Math.min(18, Math.round(sustainedDuration * 12));
+
+    // 3. 全螢幕音量物理炸裂縮放 (A/B 44: 0.75x ~ 2.8x 三段式指數級震撼擴張)
     const containerScale = isVoiceActive
-      ? smoothVolume > 75
-        ? 1.45 + ((smoothVolume - 75) / 25) * 0.2 // 大聲吼叫爆發區間: 1.45 ~ 1.65x
-        : smoothVolume > 35
-        ? 1.0 + ((smoothVolume - 35) / 40) * 0.45 // 正常說話區間: 1.0 ~ 1.45x
-        : 0.82 + (smoothVolume / 35) * 0.18      // 輕聲細語區間: 0.82 ~ 1.0x
+      ? smoothVolume > 65
+        ? 1.7 + ((smoothVolume - 65) / 35) * 1.1 // 大聲嘶吼爆發區間: 1.7x ~ 2.8x 全螢幕炸裂
+        : smoothVolume > 20
+        ? 1.0 + ((smoothVolume - 20) / 45) * 0.7 // 正常說話區間: 1.0x ~ 1.7x
+        : 0.75 + (smoothVolume / 20) * 0.25     // 輕聲細語微縮區間: 0.75x ~ 1.0x
       : 1.0;
 
-    // 3. 父容器注入通用 CSS 變數與物理縮放
+    // 4. 父容器注入通用 CSS 變數與物理縮放
     container.style.setProperty('--v-weight', `${weight}`);
     container.style.setProperty('--v-width', `${widthPercent}%`);
     container.style.setProperty('--v-y-offset', `${pitchYOffset}px`);
@@ -76,21 +79,20 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     container.style.transform = `scale(${containerScale.toFixed(2)})`;
     container.style.transformOrigin = 'center center';
 
-    // 3. 爆發態色差光暈 (Chromatic Aberration)
-    const isBurst = smoothVolume > 70;
+    // 5. 爆發態色差光暈 (Chromatic Aberration)
+    const isBurst = smoothVolume > 60;
     const glowColor = isBurst ? themeColor : accentColor;
-    const glowSpread = Math.min(28, Math.round(smoothVolume * 0.3));
+    const glowSpread = Math.min(32, Math.round(smoothVolume * 0.35));
 
     if (isVoiceActive) {
       container.style.textShadow = isBurst
-        ? `-2px 0 10px rgba(255,0,85,0.8), 2px 0 10px rgba(0,240,255,0.8), 0 0 ${glowSpread}px ${glowColor}`
+        ? `-3px 0 12px rgba(255,0,85,0.85), 3px 0 12px rgba(0,240,255,0.85), 0 0 ${glowSpread}px ${glowColor}`
         : `0 0 ${glowSpread}px ${glowColor}`;
     } else {
       container.style.textShadow = 'none';
     }
 
-    // 4. 逐字波浪起伏與短音/長音幾何變形 (A/B 14, 16, 17, 18 方案 B)
-    const widthScale = widthPercent / 100;
+    // 6. 逐字元 GPU 幾何變形 (A/B 43 / 7.37 核心：scaleX 實體拉伸中文字元)
     const count = Math.max(1, chars.length);
 
     charsRef.current.forEach((el, idx) => {
@@ -98,27 +100,30 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
       // 語調波浪：結合基頻 Y 軸浮動 + 音節正弦傳播
       const charPhase = (idx / count) * Math.PI * 2;
-      const waveAmp = isVoiceActive ? (smoothVolume / 100) * 8 : 0;
+      const waveAmp = isVoiceActive ? (smoothVolume / 100) * 10 : 0;
       const waveDisplacement = Math.sin(charPhase + pitchNormalized * 4) * waveAmp;
       const totalY = isVoiceActive ? pitchYOffset + waveDisplacement : 0;
 
-      // 垂直縮放 (短音俐落短小 0.88x vs 大聲膨脹 1.0 ~ 1.45x)
+      // 垂直縮放 (短促咬字縱向高挑 1.35x vs 大聲膨脹 1.0 ~ 1.5x)
       const scaleY = isStaccato
-        ? 0.88
+        ? 1.35
         : isVoiceActive
-        ? 1.0 + (smoothVolume / 220)
+        ? 1.0 + (smoothVolume / 200)
         : 1.0;
 
-      el.style.transform = `translateY(${totalY.toFixed(1)}px) scaleX(${widthScale.toFixed(2)}) scaleY(${scaleY.toFixed(2)})`;
+      // 直接向 DOM 節點硬體加速變形寫入 (A/B 43 100% 繁中字型相容)
+      el.style.display = 'inline-block';
+      el.style.transformOrigin = 'center center';
+      el.style.transform = `translateY(${totalY.toFixed(1)}px) scaleX(${sustainedWidth.toFixed(2)}) scaleY(${scaleY.toFixed(2)})`;
       el.style.fontWeight = `${weight}`;
-      el.style.fontStretch = `${widthPercent}%`;
+      el.style.letterSpacing = `${letterSpacingPx}px`;
     });
   }, [audioMetrics, noiseFloor, themeColor, accentColor, chars.length]);
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-4 p-6 text-center select-none transform-gpu will-change-transform"
+      className="relative w-full max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-4 p-6 text-center select-none transform-gpu will-change-transform transition-transform duration-75 ease-out"
       style={{
         fontFamily:
           'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
@@ -134,8 +139,9 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
             }}
             className="kinetic-char inline-block text-3xl sm:text-5xl md:text-6xl text-white font-black transform-gpu"
             style={{
-              willChange: 'font-weight, font-stretch, transform',
+              willChange: 'transform, font-weight, letter-spacing',
               display: isSpace ? 'inline' : 'inline-block',
+              transformOrigin: 'center center',
               minWidth: isSpace ? '0.5em' : 'auto',
             }}
           >

@@ -74,19 +74,37 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     const { volume, pitch } = getValidRecordings();
     setUserRecordedVolume(volume);
 
-    // 一維 DTW 比對 (含 5.5 < 15 影格極短錄音防崩潰保底)
+    const nowStr = new Date().toLocaleDateString('zh-TW', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    // 5.5 超短錄音或誤觸防禦 (< 15 影格約小於 250ms，防止 DTW 矩陣越界白屏)
+    if (volume.length < 15) {
+      const fallbackRes: ScoreResult = {
+        overallScore: 60,
+        volumeScore: 55,
+        pitchScore: 65,
+        rank: 'A',
+        rankTitle: '能量初生者',
+        comment: '錄音時間過短或未檢測到有效聲音，建議靠近麥克風大聲模仿！',
+        verificationCode: `SPK-${Math.floor(10000 + Math.random() * 90000)}`,
+        timestamp: nowStr,
+        scenarioId: selectedScenario.id,
+      };
+      setScoreResult(fallbackRes);
+      setSpeakState('SCORE_ANALYSIS');
+      return;
+    }
+
+    // 一維 DTW 比對
     const dtwResult = compareVoiceDTW(
       volume,
       pitch,
       selectedScenario.referenceVolumeCurve,
       selectedScenario.referencePitchCurve
     );
-
-    const nowStr = new Date().toLocaleDateString('zh-TW', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
 
     const res: ScoreResult = {
       overallScore: dtwResult.overallScore,
@@ -115,6 +133,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setMuteInput(false);
 
     await unlockAudio();
+    // 進入錄音第 0 毫秒強制解除任何麥克風硬體靜音 (A/B 45)
+    setMuteInput(false);
     startRecording();
 
     setRemainingTime(selectedScenario.durationSeconds);
@@ -255,7 +275,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 SEE HOW YOU SPEAK
               </span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70 border border-white/15">
-                v2.4 OMNI
+                v2.7.0 TYPO-AGC
               </span>
             </div>
             <p className="text-[10px] text-zinc-400 font-mono tracking-widest">
