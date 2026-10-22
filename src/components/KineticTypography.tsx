@@ -49,13 +49,22 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     const weight = mapVolumeToWeight(smoothVolume, noiseFloor);
 
-    // 1. 拉長音橫向延展 (A/B 15 方案 B：100% -> 150%)
-    const widthPercent = 100 + Math.min(50, Math.round(sustainedDuration * 35));
-    const letterSpacingPx = Math.min(10, Math.round(sustainedDuration * 7));
+    // 1. 拉長音橫向延展 (A/B 15 & A/B 35：長音延展 1.0 -> 1.65x，短音緊縮 0.88x)
+    const stretchRatio = isStaccato
+      ? 0.88
+      : 1.0 + Math.min(0.65, sustainedDuration * 0.45);
+    const widthPercent = Math.round(stretchRatio * 100);
+    const letterSpacingPx = isStaccato
+      ? -1
+      : Math.min(14, Math.round(sustainedDuration * 9));
 
-    // 2. 音量物理縮放 (A/B 34：大聲放大 0.85 -> 1.55，小聲微縮，掛載防破版約束)
+    // 2. 音量物理縮放 (A/B 34：大聲放大 1.6x 炸裂，細語微縮 0.82x)
     const containerScale = isVoiceActive
-      ? Math.max(0.85, Math.min(1.55, 0.85 + (smoothVolume / 100) * 0.7))
+      ? smoothVolume > 75
+        ? 1.45 + ((smoothVolume - 75) / 25) * 0.2 // 大聲吼叫爆發區間: 1.45 ~ 1.65x
+        : smoothVolume > 35
+        ? 1.0 + ((smoothVolume - 35) / 40) * 0.45 // 正常說話區間: 1.0 ~ 1.45x
+        : 0.82 + (smoothVolume / 35) * 0.18      // 輕聲細語區間: 0.82 ~ 1.0x
       : 1.0;
 
     // 3. 父容器注入通用 CSS 變數與物理縮放
@@ -65,6 +74,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     container.style.setProperty('--v-letter-spacing', `${letterSpacingPx}px`);
     container.style.letterSpacing = `${letterSpacingPx}px`;
     container.style.transform = `scale(${containerScale.toFixed(2)})`;
+    container.style.transformOrigin = 'center center';
 
     // 3. 爆發態色差光暈 (Chromatic Aberration)
     const isBurst = smoothVolume > 70;
@@ -92,12 +102,12 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
       const waveDisplacement = Math.sin(charPhase + pitchNormalized * 4) * waveAmp;
       const totalY = isVoiceActive ? pitchYOffset + waveDisplacement : 0;
 
-      // 垂直縮放 (短音俐落短小 vs 大聲膨脹)
+      // 垂直縮放 (短音俐落短小 0.88x vs 大聲膨脹 1.0 ~ 1.45x)
       const scaleY = isStaccato
-        ? 0.94
+        ? 0.88
         : isVoiceActive
-        ? 1 + (smoothVolume / 450)
-        : 1;
+        ? 1.0 + (smoothVolume / 220)
+        : 1.0;
 
       el.style.transform = `translateY(${totalY.toFixed(1)}px) scaleX(${widthScale.toFixed(2)}) scaleY(${scaleY.toFixed(2)})`;
       el.style.fontWeight = `${weight}`;
@@ -108,7 +118,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-full max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-4 p-6 text-center select-none transition-colors duration-150"
+      className="relative w-full max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-x-2 gap-y-4 p-6 text-center select-none transform-gpu will-change-transform"
       style={{
         fontFamily:
           'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
@@ -122,7 +132,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
             ref={(el) => {
               charsRef.current[index] = el;
             }}
-            className="kinetic-char inline-block transition-transform duration-75 text-3xl sm:text-5xl md:text-6xl text-white font-black"
+            className="kinetic-char inline-block text-3xl sm:text-5xl md:text-6xl text-white font-black transform-gpu"
             style={{
               willChange: 'font-weight, font-stretch, transform',
               display: isSpace ? 'inline' : 'inline-block',
