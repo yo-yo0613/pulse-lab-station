@@ -285,15 +285,20 @@ export interface AudioMetrics {
   isVoiceActive: boolean;    // 是否突破環境底噪
 }
 ```
+* **時鐘基準 (A/B 10)**：錄音倒數嚴格採用音訊晶片硬體時鐘 `audioCtx.currentTime`，與系統 Event Loop 解耦，精度達 0.1ms。
+* **原音切片 (A/B 36)**：錄音期間掛載原生 `MediaRecorder`，結束時產出 `audioBlob` 與 Object URL，供結算與海報頁現場重放與 AB 盲測對比。
+* **防迴音閘門 (7.22 & 7.29)**：提供 `muteInput(boolean)`，示範影片播放及原音回放期間強制麥克風 GainNode 歸零，防喇叭自激。
 
 ### 5.2 動態字體組件 (`src/components/KineticTypography.tsx`)
 * **字體選型**：可變字體（支援 `wght` 100~900, `wdth` 75%~125%），打包在 `public/fonts/`。
 * **圖層隔離**：逐字/音節 `<span />` 套用 `will-change: font-weight, transform; display: inline-block;`。
 * **變形映射**：
   * `font-weight`: 經 Sigmoid 飽和箝位後直接注入 `--v-weight` (100 ~ 900)。
-  * `font-stretch`: `--v-width` (75% ~ 125%)。
+  * `font-stretch`: `--v-width` (75% ~ 150%，持音橫向拉長)。
+  * `scale`: 音量物理縮放 `transform: scale(0.85 ~ 1.75)`，大聲嘶吼炸裂膨脹，細語微縮。
   * `letter-spacing`: 大音量向外爆發擴散 (0px -> 8px)。
   * `text-shadow`: 音量爆發時觸發洋紅/青色色差光暈 (Chromatic Aberration)。
+  * **防撞幾何防護 (7.28)**：外層容器設置 `max-width: 90%; word-break: break-word;`，字數較多時自動自適應換行，杜絕海報兩側破版。
 
 ### 5.3 3D 音波流體背景 (`src/components/VoiceVisualizer3D.tsx`)
 * `<MeshDistortMaterial distort={volume * 0.015} speed={pitch * 2} color="#00F0FF" />`
@@ -306,6 +311,7 @@ export interface AudioMetrics {
 
 ### 5.5 聲波對齊評分引擎 (`src/utils/audioDTW.ts`)
 * 輸入有效切片長度 `volumeBuffer.subarray(0, recordedFrames)`。
+* **空陣列與超短錄音防禦**：若有效長度 `< 15` 影格（約不足 250ms），強制攔截禁止進入二維矩陣運算，直接給予防呆提示與基礎保底評分，杜絕 `IndexOutOfBounds` 崩潰。
 * 輸出 0~100 分綜合還原度評級與關鍵幀評價。
 
 ---
