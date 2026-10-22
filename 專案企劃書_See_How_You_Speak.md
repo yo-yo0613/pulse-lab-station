@@ -5,8 +5,8 @@
 * **核心提案組員**：林妤安、柯佩岑、林科余（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **專案主題界定**：本規格書**100% 專注於「聲音視覺化 / 語音模仿動態字體 / 沉浸互動展演」**，與同課堂另一組由劉芯妤等同學發表之「慧眼（HuiYan）」穿戴式手套控制器提案完全區隔，請評圖與展示時明確辨識。
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / 本地聲學 DNA 編碼)
-* **架構決策原則**：42 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v2.6.0 (Audio Demo TTS & Dual-Track Master PRD)
+* **架構決策原則**：47 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v2.7.0 (Kinetic Typography & Mic AGC Master PRD)
 * **最後更新**：2026 年 10 月 22 日
 
 ---
@@ -88,9 +88,9 @@ flowchart TD
 
 ---
 
-## ⚔️ 四、 42 大工業級展演 A/B 技術決策（全數鎖定方案 B）
+## ⚔️ 四、 47 大工業級展演 A/B 技術決策（全數鎖定方案 B）
 
-在真實商場與展會實機環境中，工程團隊與架構評審必須面對 42 個致命的物理與架構選擇題，**本專案全數嚴格執行「方案 B」最佳實踐**：
+在真實商場與展會實機環境中，工程團隊與架構評審必須面對 47 個致命的物理與架構選擇題，**本專案全數嚴格執行「方案 B」最佳實踐**：
 
 ### 🎨 組別一：渲染與視覺效能組
 
@@ -292,6 +292,28 @@ flowchart TD
 * **方案 A（陷阱）**：體驗者在示範頁快速連續點選不同的情境 Tab，前一個情境的示範語音未停止，新情境又開播，多個聲音重疊如菜市場，系統音訊通道崩潰。
 * **方案 B（最佳實踐，100% 採用）**：**單一語音播放控制器互斥閥 (Exclusive Audio Controller)**。切換情境或離開頁面時，強制執行 `speechSynthesis.cancel()` 與 `audio.pause()`、`audio.currentTime = 0`，永遠保持單一聲音通道乾淨。
 
+### 🔤 組別十一：動態字體極限拉長拉短、中文字元 GPU 幾何變形與麥克風拾音鏈路組 (A/B 43 ~ A/B 47)
+
+#### 【A/B 43】 中文字體無 `wdth` 可變字軸之橫向延展：純 CSS `font-stretch` 宣告 vs DOM `inline-block` + GPU `transform: scaleX(...)` 幾何矩陣
+* **方案 A（陷阱）**：盲目依賴 CSS `font-stretch: 150%` 或 `font-variation-settings: 'wdth' 150`。因為 Windows、Android 與多數作業系統內建繁體中文字型（微軟正黑體、思源黑體常規版）根本沒有 `wdth` 變形軸，瀏覽器直接靜默忽略，字體完全不會拉長拉短，視覺紋風不動！
+* **方案 B（最佳實踐，100% 採用）**：**DOM 逐字元 `inline-block` + GPU `transform: scaleX(...) scaleY(...)` 幾何矩陣**。不依賴作業系統字型檔案支援度，直接對字元節點施加硬體幾何變形，長音時 `scaleX` 狂暴延展至 **1.8x ~ 2.4x**，短音時 `scaleX(0.75) scaleY(1.35)` 縱向彈跳，保證 100% 任何中文字體均能即時拉長拉短！
+
+#### 【A/B 44】 音量物理縮放視覺體感：保守微調 (1.0x ~ 1.4x) vs 指數級全螢幕爆裂衝擊 (0.75x ~ 2.8x 炸裂)
+* **方案 A（陷阱）**：音量縮放範圍僅設為 1.0x ~ 1.4x，在 1080x1920 大螢幕上，使用者大吼時感覺字體「只稍微胖了一點點」，完全感受不到「吼出來文字直接炸開」的宣洩感與快感。
+* **方案 B（最佳實踐，100% 採用）**：**非線性指數級三段式縮放（0.75x 弱音微縮 -> 1.0x 基準 -> 2.6x~2.8x 爆裂全螢幕）**。當使用者吼出爆發音時，文字瞬間占滿螢幕中央，結合色差故障（Chromatic Aberration）與強烈外發光，帶來極致視覺震懾。
+
+#### 【A/B 45】 示範音切換錄音時麥克風軟體靜音閘門殘留：依賴組件卸載 vs 狀態機轉移全域強制解鎖 (Unconditional Mic Unlock)
+* **方案 A（陷阱）**：在示範頁掛載 `setMuteInput(true)`，並寄望於組件 `useEffect` cleanup 卸載時解鎖。若使用者點擊「換我模仿」觸發急躁跳轉，父層 state 異步滯後，麥克風硬體 GainNode 永遠被鎖在 0，進入錄音頁時 `VOL` 恆為 0%，字體判定為「無聲」而動彈不得！
+* **方案 B（最佳實踐，100% 採用）**：**狀態機轉移之「全域強制靜音解除協定（Unconditional Mic Gain Restore）」**。在 `handleStartRecording` 執行的第 0 毫秒，無論任何前置狀態，強制將 `gainNode.gain.cancelScheduledValues` 並硬性拉回 1.0，確保錄音開始瞬間麥克風 100% 處於通暢拾音狀態！
+
+#### 【A/B 46】 麥克風拾音靈敏度與底噪閥門：固定單一門檻 vs 軟體自適應自動增益 (Dynamic Software AGC + Pitch Baseline Boost)
+* **方案 A（陷阱）**：底噪閾值若固定過高（如音量必須 > 18% 才能觸發），在收音較小或筆電內建麥克風時，使用者說話聲音無法跨越閘門，畫面永遠顯示 `GATE: 環境底噪`，文字死鎖在預設形態。
+* **方案 B（最佳實踐，100% 採用）**：**自適應動態門檻 + 軟體自動增益補償（Dynamic AGC Pipeline）**。系統即時追蹤當前 RMS，若檢測到人聲頻率（85Hz~350Hz 能量）存在，即使音量較小，也自動將訊號乘上自適應增益係數（1.2x~2.5x），保證輕聲細語也有動態波浪、大吼大叫必定突破極限！
+
+#### 【A/B 47】 逐字延展版面防爆：固定行距換行碰撞 vs Flex Auto-Tracking 彈性字距間隙補償
+* **方案 A（陷阱）**：每個字 `scaleX` 放大到 2.0 倍時，字體左右邊界與相鄰字元嚴重重疊穿插，字面糊成一團無法辨識；或整行字直接衝出螢幕兩側被切斷。
+* **方案 B（最佳實踐，100% 採用）**：**CSS Flexbox `letter-spacing` 動態負向/正向補償 + 容器自動等比縮放（Auto-Fit Safe Bounding Box）**。長音拉長時自動拉開字元間距，若總長度接近螢幕 88% 寬度時，父層自動下修基準字級，既有極限拉長張力，又保證 100% 絕不穿幫出界！
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -312,14 +334,15 @@ export interface AudioMetrics {
 * **防迴音閘門 (7.22 & 7.29)**：提供 `muteInput(boolean)`，示範影片播放及原音回放期間強制麥克風 GainNode 歸零，防喇叭自激。
 
 ### 5.2 動態字體組件 (`src/components/KineticTypography.tsx`)
-* **字體選型**：可變字體（支援 `wght` 100~900, `wdth` 75%~125%），打包在 `public/fonts/`。
-* **圖層隔離**：逐字/音節 `<span />` 套用 `will-change: font-weight, transform; display: inline-block;`。
-* **變形映射**：
+* **字體選型與中文字形相容性 (A/B 43)**：不依賴作業系統字型內部 `wdth` 可變軸，在 DOM 層將台詞逐字拆解為獨立的 `<span style="display:inline-block">` 字元容器。
+* **圖層隔離**：逐字/音節 `<span />` 套用 `will-change: transform; display: inline-block; transform-gpu`。
+* **極限變形映射架構**：
   * `font-weight`: 經 Sigmoid 飽和箝位後直接注入 `--v-weight` (100 ~ 900)。
-  * `font-stretch`: `--v-width` (75% ~ 150%，持音橫向拉長)。
-  * `scale`: 音量物理縮放 `transform: scale(0.85 ~ 1.75)`，大聲嘶吼炸裂膨脹，細語微縮。
-  * `letter-spacing`: 大音量向外爆發擴散 (0px -> 8px)。
-  * `text-shadow`: 音量爆發時觸發洋紅/青色色差光暈 (Chromatic Aberration)。
+  * `橫向極限拉長 (ScaleX)`：持音累加器驅動 GPU 幾何延展 `scaleX(1.0 ~ 2.4)`，徹底解決繁體中文字型無 `wdth` 軸導致「拉長音紋風不動」之問題。
+  * `短音瞬態收縮 (Staccato)`：咬字急促脈衝觸發 `scaleX(0.75) scaleY(1.35)` 縱向彈跳，展現動漫感嘆句爆破感。
+  * `全螢幕音量物理縮放 (A/B 44)`：三段式指數級縮放 `transform: scale(0.75 ~ 2.8)`，大聲嘶吼瞬間佔滿螢幕炸裂，細語收縮至 0.75x。
+  * `彈性字距聯動 (A/B 47)`：長音延展時同步拉開 `letter-spacing` (0px -> 14px)，防止相鄰字元穿插重疊。
+  * `text-shadow`: 音量爆發時觸發洋紅/青色色差光暈 (Chromatic Aberration) 與霓虹漸層。
   * **防撞幾何防護 (7.28)**：外層容器設置 `max-width: 90%; word-break: break-word;`，字數較多時自動自適應換行，杜絕海報兩側破版。
 
 ### 5.3 3D 音波流體背景 (`src/components/VoiceVisualizer3D.tsx`)
@@ -355,7 +378,7 @@ export interface AudioMetrics {
 
 ---
 
-## ⚠️ 七、 現場實戰老手視角：36 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
+## ⚠️ 七、 現場實戰老手視角：41 大極致致命的「隱性坑點」與避坑防線 (Hidden Edge Cases & Defense)
 
 ### 7.1 可變字體 (Variable Fonts) 本地離線快取陷阱
 * **隱性災難**：依賴 Google Fonts 等外網 CDN，展場斷網時字體降級為新細明體，形變動畫全毀。
@@ -500,6 +523,30 @@ export interface AudioMetrics {
 ### 7.36 示範 MP3 遠端加載延遲導致「畫面進度條先跑完、聲音才剛開播」的嚴重音畫不同步 (MP3 Preload Delay Drift)
 * **隱性災難**：若實體原片示範 MP3 未設預載，在展場地下室弱網下需 1.2 秒才載入完成，此時畫面上的波形柱已經跑過大半，聲音才突然冒出來，音畫嚴重錯位破壞沉浸感。
 * **避坑防線**：在 `LANDING` 迎賓待機階段，背景 PWA Service Worker 與 `<link rel="preload">` 自動將 4 大情境之示範短音（總量 < 800KB）提前預載至本地 RAM 記憶體，進入示範頁時 0ms 秒播，達成絕對音畫物理同步。
+
+### 7.37 中文無 Variable Font 寬度軸導致字體「假變形、真不動」陷阱 (Chinese Font Missing Width Axis)
+* **隱性災難**：市面上包括微軟正黑體、思源黑體常規版等絕大多數中文字型，根本沒有實裝 OpenType 可變字體的 `wdth`（寬度伸展軸）！若工程端天真地在 CSS 宣告 `font-stretch: 150%` 或 `font-variation-settings: 'wdth' 150`，瀏覽器在渲染中文字元時會完全無視該屬性，導致使用者明明持續拉長音呼喊，文字在畫面上卻如同死水般紋風不動！
+* **避坑防線**：徹底脫離字型檔案本身的規格缺陷，在 DOM 層將台詞逐字拆解為獨立的 `<span style="display:inline-block">` 字元容器，並由 GPU 幾何變形矩陣 `transform: scaleX(calc(var(--v-width) / 100))` 進行物理直接拉伸。此舉不依賴任何字型內部可變軸支援，100% 確保任何繁體中文字元在拉長音時均能狂暴滑順地橫向展延達 2.0x~2.5x！
+
+### 7.38 示範頁切換模仿錄音時 GainNode 殘留 0 導致「全域靜音、VOL 恆為 0%」 (Stale Mic Mute Gate Trap)
+* **隱性災難**：系統為了防止示範影片／TTS 播放時機台喇叭聲音迴音自激，設計了軟體靜音閘門（`setMuteInput(true)`，將硬體 `GainNode.gain` 降至 0）。但若使用者急躁點擊「換我模仿」或狀態機轉移時，由於 React 異步狀態批次更新或卸載延遲，麥克風 GainNode 依然死鎖在 0！導致進入錄音介面後，即使使用者對著麥克風大吼大叫，畫面右上角依然永遠卡死在 `VOL: 0% PITCH: 120 Hz GATE: 環境底噪`，動態字體因未偵測到有效音量而 100% 毫無形變反應！
+* **避坑防線**：建立「狀態機轉移全域強制靜音解除協定（Unconditional Mic Gain Restore）」：在呼叫 `handleStartRecording` 啟動錄音倒數的第 0 毫秒，無論前置狀態如何，強制調用 `audioCtx.currentTime` 執行 `gainNode.gain.cancelScheduledValues(0)` 並硬性將 gain 直通拉回 1.0；同時在錄音循環中加入心跳守門狗，若錄音期間檢測到 gainNode 為 0，立即自主糾錯復位！
+
+### 7.39 麥克風音量微弱被 Noise Gate 判定為「環境底噪」導致字體完全不變形 (Noise Gate Choke)
+* **隱性災難**：體驗者若因害羞、距離指向性麥克風較遠或使用筆電內建弱收音麥克風，其發出的說話 RMS 音量無法跨越系統設定的 `noiseFloor + 8` 門檻。系統邏輯將其一律標記為 `isVoiceActive = false`，導致後續的字重、字寬與縮放邏輯全數被 return 阻斷，畫面文字永遠停在預設最細最小狀態。
+* **避坑防線**：建立「自適應軟體自動增益（Dynamic Software AGC）與雙重語音活性檢測（Dual VAD）」：
+  1. 不單憑音量大小判斷，而是同步檢驗自相關演算法萃取出的人聲基頻有效性（85Hz~350Hz 能量穩定度）。
+  2. 只要偵測到穩定人聲音高，即使音量低於底噪門檻，系統自動將音量訊號乘上動態增益補償係數（1.5x~2.5x），保證輕聲細語也有生動的波浪起伏與微縮呼吸，絕不假死！
+
+### 7.40 長音橫向極限拉長時字元左右重疊「文字互相打架穿插」破面 (ScaleX Glyph Overlap)
+* **隱性災難**：在逐字套用 `transform: scaleX(2.2)` 橫向拉長字體時，若僅單純拉寬字元幾何尺寸，字元會以各自的中心點（`transform-origin: center`）向兩側膨脹，相鄰的中文字元邊界會嚴重互相重疊、字形黑成一團變成不可辨識的色塊，甚至兩側字元直接衝出螢幕或海報裁切框。
+* **避坑防線**：建立「彈性字距聯動擴散管線（Elastic Tracking & Bounding Box）」：
+  1. 字元幾何拉寬時，外層容器同步動態注入 `letter-spacing: calc(var(--v-sustained) * 12px)`，讓文字字距如同手風琴般向兩側優雅拉開，保持清晰筆畫分離度。
+  2. 若整行文字總寬度超過螢幕或海報安全框的 88%，父容器自動由彈簧阻尼即時下修基準字級（Font Size Auto-clamp），兼顧極限拉伸的張力與版面美感。
+
+### 7.41 Vercel 雲端快取與本地版本延遲引發的「線上測試舊版本假象」 (Vercel Build Deployment Lag)
+* **隱性災難**：工程端在本地已經修復了最新功能並通過了 Build 測試，但線上展示環境（如 `pulse-lab-station.vercel.app`）可能因為 Vercel 雲端打包佇列延遲、CDN 邊緣節點快取或瀏覽器 Service Worker 的強力離線快取，導致展示者在手機或展機上打開的依然是數小時前的舊版本（如畫面上方依然標記為 `v2.4 OMNI`），造成「誤以為工程端根本沒改」的團隊溝通重大斷層。
+* **避坑防線**：在系統全域導航頂部顯式植入「精準版本號徽章（如 `v2.7.0 TYPO-AGC`）」，並在 PWA Service Worker 註冊層配置主動版本比對與 `skipWaiting()` 強制刷新機制；同時在維護者暗樁抽屜提供「一鍵清空快取並硬性重載（Hard Reload & Cache Purge）」按鈕，確保展演現場合作各方永遠在同一版本視角下驗收！
 
 ---
 
