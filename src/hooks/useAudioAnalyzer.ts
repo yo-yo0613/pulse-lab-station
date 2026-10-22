@@ -247,17 +247,26 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     muteInput(false);
     calibrateNoiseFloor();
 
-    // 啟動 MediaRecorder 串流錄製 (A/B 36 原音重現)
+    // 啟動 MediaRecorder 串流錄製 (A/B 36 原音重現 - 跨平台格式自適應)
     audioChunksRef.current = [];
     if (streamRef.current && typeof MediaRecorder !== 'undefined') {
       try {
-        let mimeType = 'audio/webm;codecs=opus';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'audio/webm';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = '';
-          }
-        }
+        const candidateTypes = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4',
+          'audio/aac',
+          'audio/ogg',
+        ];
+        let mimeType =
+          candidateTypes.find((type) => {
+            try {
+              return MediaRecorder.isTypeSupported(type);
+            } catch (_) {
+              return false;
+            }
+          }) || '';
+
         const options = mimeType ? { mimeType } : undefined;
         const mr = new MediaRecorder(streamRef.current, options);
         mr.ondataavailable = (e) => {
@@ -266,7 +275,8 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
           }
         };
         mr.onstop = () => {
-          const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+          const blobType = mr.mimeType || mimeType || 'audio/webm';
+          const blob = new Blob(audioChunksRef.current, { type: blobType });
           setUserAudioBlob(blob);
           const url = URL.createObjectURL(blob);
           setUserAudioUrl(url);

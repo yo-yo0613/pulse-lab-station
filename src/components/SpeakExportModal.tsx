@@ -33,24 +33,40 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
 
   const togglePlayAudio = () => {
     if (!userAudioUrl) return;
-    if (isPlayingAudio) {
-      audioRef.current?.pause();
+
+    if (isPlayingAudio && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       setIsPlayingAudio(false);
       onPlayStateChange?.(false);
-    } else {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(userAudioUrl);
-        audioRef.current.onended = () => {
-          setIsPlayingAudio(false);
-          onPlayStateChange?.(false);
-        };
-      } else {
-        audioRef.current.src = userAudioUrl;
-      }
-      onPlayStateChange?.(true); // 觸發靜音閘門 (Defense 7.29)
-      audioRef.current.play().catch(() => {});
-      setIsPlayingAudio(true);
+      return;
     }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    const audio = new Audio(userAudioUrl);
+    audioRef.current = audio;
+
+    audio.onended = () => {
+      setIsPlayingAudio(false);
+      onPlayStateChange?.(false);
+    };
+
+    audio.onerror = () => {
+      setIsPlayingAudio(false);
+      onPlayStateChange?.(false);
+    };
+
+    onPlayStateChange?.(true);
+    audio.play().then(() => {
+      setIsPlayingAudio(true);
+    }).catch(() => {
+      setIsPlayingAudio(false);
+      onPlayStateChange?.(false);
+    });
   };
 
   useEffect(() => {

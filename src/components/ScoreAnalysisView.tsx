@@ -25,24 +25,42 @@ export const ScoreAnalysisView: React.FC<ScoreAnalysisViewProps> = ({
 
   const togglePlayUserVoice = () => {
     if (!userAudioUrl) return;
-    if (isPlayingUserVoice) {
-      audioRef.current?.pause();
+
+    if (isPlayingUserVoice && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       setIsPlayingUserVoice(false);
       onPlayStateChange?.(false);
-    } else {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(userAudioUrl);
-        audioRef.current.onended = () => {
-          setIsPlayingUserVoice(false);
-          onPlayStateChange?.(false);
-        };
-      } else {
-        audioRef.current.src = userAudioUrl;
-      }
-      onPlayStateChange?.(true); // 軟體靜音麥克風防迴音 (Defense 7.29)
-      audioRef.current.play().catch(() => {});
-      setIsPlayingUserVoice(true);
+      return;
     }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    const audio = new Audio(userAudioUrl);
+    audioRef.current = audio;
+
+    audio.onended = () => {
+      setIsPlayingUserVoice(false);
+      onPlayStateChange?.(false);
+    };
+
+    audio.onerror = (e) => {
+      console.warn('[See How You Speak] Audio playback error:', e);
+      setIsPlayingUserVoice(false);
+      onPlayStateChange?.(false);
+    };
+
+    onPlayStateChange?.(true); // 軟體靜音麥克風防迴音 (Defense 7.29)
+    audio.play().then(() => {
+      setIsPlayingUserVoice(true);
+    }).catch((err) => {
+      console.warn('[See How You Speak] Play blocked:', err);
+      setIsPlayingUserVoice(false);
+      onPlayStateChange?.(false);
+    });
   };
 
   useEffect(() => {
@@ -174,7 +192,7 @@ export const ScoreAnalysisView: React.FC<ScoreAnalysisViewProps> = ({
         </div>
 
         {/* 原音回放控制列 (A/B 36 現場笑點與原音重現) */}
-        {userAudioUrl && (
+        {userAudioUrl ? (
           <div className="w-full bg-black/50 border border-white/10 p-3 rounded-xl flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-cyan-400" />
@@ -182,20 +200,27 @@ export const ScoreAnalysisView: React.FC<ScoreAnalysisViewProps> = ({
             </div>
             <button
               onClick={togglePlayUserVoice}
-              className="px-4 py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-300 font-bold text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-95"
+              className="px-4 py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400 text-cyan-300 font-bold text-xs flex items-center gap-2 transition-all cursor-pointer active:scale-95 shadow-[0_0_15px_rgba(0,240,255,0.2)]"
             >
               {isPlayingUserVoice ? (
                 <>
-                  <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>暫停播放</span>
+                  <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+                  <span>暫停原音播放</span>
                 </>
               ) : (
                 <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <Play className="w-3.5 h-3.5 fill-current text-cyan-400" />
                   <span>聆聽我的原音重現 (PLAY VOICE)</span>
                 </>
               )}
             </button>
+          </div>
+        ) : (
+          <div className="w-full bg-black/30 border border-white/5 p-3 rounded-xl flex items-center justify-between text-xs text-zinc-500">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-4 h-4 text-zinc-600 animate-pulse" />
+              <span>正在封裝現場音訊軌道 (PACKAGING AUDIO)...</span>
+            </div>
           </div>
         )}
 
