@@ -106,6 +106,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
   // 3. 啟動模仿錄音倒數計時 (聲卡 DAC 硬體時鐘 A/B 10 精度 0.1ms 零漂移)
   const handleStartRecording = useCallback(async () => {
+    // 零延遲中斷任何示範發音與 TTS (A/B 41, 7.35 防串音污染錄音與 DTW)
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      (window as any).__activeUtterance = null;
+    }
+    setIsVideoPlaying(false);
+    setMuteInput(false);
+
     await unlockAudio();
     startRecording();
 
@@ -127,7 +135,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     };
 
     animFrameIdRef.current = requestAnimationFrame(checkCountdown);
-  }, [unlockAudio, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording]);
+  }, [unlockAudio, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording, setMuteInput]);
 
   // 清除計時器
   useEffect(() => {
@@ -138,6 +146,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
   // 重置回到待機首頁 (Defense 7.31 清理 Blob 記憶體防洩漏)
   const handleRestart = useCallback(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      (window as any).__activeUtterance = null;
+    }
+    setIsVideoPlaying(false);
+    setMuteInput(false);
     if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     stopRecording();
     clearRecordedAudio(); // 釋放 Audio Blob 記憶體
@@ -147,7 +161,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setSpeakState('LANDING');
     // 自動重新取樣底噪 (A/B 32)
     calibrateNoiseFloor();
-  }, [stopRecording, clearRecordedAudio, selectedScenario.durationSeconds, calibrateNoiseFloor]);
+  }, [stopRecording, clearRecordedAudio, selectedScenario.durationSeconds, calibrateNoiseFloor, setMuteInput]);
 
   // 4. 全模態輸入事件分發聚合器 (A/B 28 Omni-Input Action Bus)
   const handleOmniAction = useCallback(
@@ -164,6 +178,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       if (action === 'SELECT_SCENARIO') {
         if (typeof payload === 'number' && PROMPT_SCENARIOS[payload]) {
+          if (typeof window !== 'undefined' && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+            (window as any).__activeUtterance = null;
+          }
           setSelectedScenario(PROMPT_SCENARIOS[payload]);
         }
         return;
