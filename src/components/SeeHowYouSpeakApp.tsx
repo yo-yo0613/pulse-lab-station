@@ -22,10 +22,14 @@ interface SeeHowYouSpeakAppProps {
 export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMode }) => {
   const [speakState, setSpeakState] = useState<SpeakState>('LANDING');
   const [selectedScenario, setSelectedScenario] = useState<PromptScenario>(PROMPT_SCENARIOS[0]);
-  const [remainingTime, setRemainingTime] = useState<number>(5.0);
+  const [isActivelyRecording, setIsActivelyRecording] = useState<boolean>(false);
+  const [elapsedRecordTime, setElapsedRecordTime] = useState<number>(0);
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [userRecordedVolume, setUserRecordedVolume] = useState<Float32Array>(new Float32Array(0));
   const [userRecordedPitch, setUserRecordedPitch] = useState<Float32Array>(new Float32Array(0));
+
+  // 手動 Toggle 錄音防連擊防禦 (A/B 55, 7.49 300ms 點擊互鎖)
+  const lastToggleTimeRef = useRef<number>(0);
 
   // 維護者抽屜與全模態控制狀態
   const [isMaintainerOpen, setIsMaintainerOpen] = useState(false);
@@ -120,12 +124,13 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       scenarioId: selectedScenario.id,
     };
 
+    setIsActivelyRecording(false);
     setScoreResult(res);
     setSpeakState('SCORE_ANALYSIS');
   }, [stopRecording, getValidRecordings, selectedScenario]);
 
-  // 3. 啟動模仿錄音倒數計時 (聲卡 DAC 硬體時鐘 A/B 10 精度 0.1ms 零漂移)
-  const handleStartRecording = useCallback(async () => {
+  // 3. 進入錄音畫面 (待命手動按開始)
+  const handleEnterRecordingStage = useCallback(async () => {
     // 零延遲中斷任何示範發音與 TTS (A/B 41, 7.35 防串音污染錄音與 DTW)
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -135,29 +140,48 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setMuteInput(false);
 
     await unlockAudio();
-    // 進入錄音第 0 毫秒強制解除任何麥克風硬體靜音 (A/B 45)
-    setMuteInput(false);
-    startRecording();
-
-    setRemainingTime(selectedScenario.durationSeconds);
+    setIsActivelyRecording(false);
+    setElapsedRecordTime(0);
     setSpeakState('RECORDING');
+  }, [unlockAudio, setMuteInput]);
 
-    if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+  // 手動 Toggle 錄音開關：點一次開始，再點一次結束 (A/B 55, 7.49 互鎖防禦, 7.50 12s 看門狗)
+  const handleToggleRecording = useCallback(async () => {
+    const now = performance.now();
+    // 300ms 點擊互鎖防抖動
+    if (now - lastToggleTimeRef.current < 300) {
+      return;
+    }
+    lastToggleTimeRef.current = now;
 
-    const checkCountdown = () => {
-      const elapsed = getElapsedHardwareTime();
-      const left = Math.max(0, selectedScenario.durationSeconds - elapsed);
-      setRemainingTime(parseFloat(left.toFixed(1)));
+    if (!isActivelyRecording) {
+      // 點擊【開始錄音】
+      await unlockAudio();
+      setMuteInput(false);
+      startRecording();
+      setIsActivelyRecording(true);
+      setElapsedRecordTime(0);
 
-      if (left <= 0) {
-        finishRecording();
-      } else {
-        animFrameIdRef.current = requestAnimationFrame(checkCountdown);
-      }
-    };
+      if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
-    animFrameIdRef.current = requestAnimationFrame(checkCountdown);
-  }, [unlockAudio, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording, setMuteInput]);
+      const checkDuration = () => {
+        const elapsed = getElapsedHardwareTime();
+        setElapsedRecordTime(parseFloat(elapsed.toFixed(1)));
+
+        // 12 秒安全看門狗上限 (Defense 7.50，防止離席佔線)
+        if (elapsed >= 12.0) {
+          finishRecording();
+        } else {
+          animFrameIdRef.current = requestAnimationFrame(checkDuration);
+        }
+      };
+
+      animFrameIdRef.current = requestAnimationFrame(checkDuration);
+    } else {
+      // 點擊【結束錄音】
+      finishRecording();
+    }
+  }, [isActivelyRecording, unlockAudio, setMuteInput, startRecording, getElapsedHardwareTime, finishRecording]);
 
   // 清除計時器
   useEffect(() => {
@@ -177,14 +201,15 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
     stopRecording();
     clearRecordedAudio(); // 釋放 Audio Blob 記憶體
+    setIsActivelyRecording(false);
+    setElapsedRecordTime(0);
     setScoreResult(null);
     setUserRecordedVolume(new Float32Array(0));
     setUserRecordedPitch(new Float32Array(0));
-    setRemainingTime(selectedScenario.durationSeconds);
     setSpeakState('LANDING');
     // 自動重新取樣底噪 (A/B 32)
     calibrateNoiseFloor();
-  }, [stopRecording, clearRecordedAudio, selectedScenario.durationSeconds, calibrateNoiseFloor, setMuteInput]);
+  }, [stopRecording, clearRecordedAudio, calibrateNoiseFloor, setMuteInput]);
 
   // 4. 全模態輸入事件分發聚合器 (A/B 28 Omni-Input Action Bus)
   const handleOmniAction = useCallback(
@@ -212,14 +237,18 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       if (action === 'FORCE_SUBMIT') {
         if (speakState === 'RECORDING') {
-          finishRecording();
+          if (isActivelyRecording) {
+            finishRecording();
+          }
         }
         return;
       }
 
       if (action === 'START_RECORDING') {
         if (speakState === 'PROMPT_VIDEO' || speakState === 'LANDING') {
-          handleStartRecording();
+          handleEnterRecordingStage();
+        } else if (speakState === 'RECORDING') {
+          handleToggleRecording();
         }
         return;
       }
@@ -237,9 +266,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             setSpeakState('PROMPT_VIDEO');
           });
         } else if (speakState === 'PROMPT_VIDEO') {
-          handleStartRecording();
+          handleEnterRecordingStage();
         } else if (speakState === 'RECORDING') {
-          finishRecording();
+          handleToggleRecording();
         } else if (speakState === 'SCORE_ANALYSIS') {
           setSpeakState('EXPORT_CARD');
         } else if (speakState === 'EXPORT_CARD') {
@@ -247,7 +276,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         }
       }
     },
-    [speakState, handleRestart, handleStartRecording, finishRecording, unlockAudio]
+    [speakState, handleRestart, handleEnterRecordingStage, handleToggleRecording, isActivelyRecording, finishRecording, unlockAudio]
   );
 
   const { dispatchAction, lastActionSource, watchdogRemaining } = useOmniInput({
@@ -491,13 +520,27 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             audioMetrics={audioMetrics}
           />
 
-          {/* 錄音頂部狀態 HUD */}
+          {/* 錄音頂部狀態 HUD (A/B 55 手動 Toggle 狀態與時長顯示) */}
           <div className="relative z-30 flex items-center justify-between pt-16 px-4">
             <div className="flex items-center gap-3 bg-black/60 border border-white/15 px-4 py-2 rounded-full backdrop-blur-md">
-              <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
-              <span className="text-xs font-mono font-bold text-rose-400">REC 正在錄音模仿中</span>
+              <span
+                className={`w-3 h-3 rounded-full ${
+                  isActivelyRecording ? 'bg-rose-500 animate-ping' : 'bg-amber-400'
+                }`}
+              />
+              <span
+                className={`text-xs font-mono font-bold ${
+                  isActivelyRecording ? 'text-rose-400' : 'text-amber-400'
+                }`}
+              >
+                {isActivelyRecording ? 'REC 正在錄音模仿中' : 'STANDBY 待命錄音中'}
+              </span>
               <span className="text-xs font-mono text-zinc-400">|</span>
-              <span className="text-xs font-mono text-white">倒數 {remainingTime.toFixed(1)} 秒</span>
+              <span className="text-xs font-mono text-white">
+                {isActivelyRecording
+                  ? `已錄製 ${elapsedRecordTime.toFixed(1)} 秒 (上限 12s)`
+                  : '請點擊下方按鈕開始'}
+              </span>
             </div>
 
             {/* 即時音高與音量數據 */}
@@ -525,19 +568,36 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             />
 
             <p className="mt-8 text-xs font-mono text-zinc-400 tracking-wider">
-              ✦ 用你的情緒與聲調 大聲喊出這句話 ✦
+              {isActivelyRecording
+                ? '✦ 用你的情緒與聲調 大聲喊出這句話，說完後點擊結束 ✦'
+                : '✦ 請點擊下方「開始錄音」，對著麥克風大聲模仿 ✦'}
             </p>
           </div>
 
-          {/* 底部控制器 */}
-          <div className="relative z-30 flex items-center justify-center pb-8">
-            <button
-              onClick={() => dispatchAction('FORCE_SUBMIT', 'touch')}
-              className="px-6 py-3 rounded-full bg-rose-500/20 hover:bg-rose-500/40 border border-rose-500 text-rose-400 hover:text-white font-mono text-xs font-bold tracking-wider flex items-center gap-2 transition-all cursor-pointer backdrop-blur-md active:scale-95"
-            >
-              <Square className="w-3.5 h-3.5 fill-current" />
-              提早完成並計算相似度
-            </button>
+          {/* 底部控制器 (手動 Toggle：點擊開始 ➔ 點擊結束，A/B 55) */}
+          <div className="relative z-30 flex items-center justify-center pb-8 gap-4">
+            {!isActivelyRecording ? (
+              <button
+                onClick={handleToggleRecording}
+                className="px-8 py-4 rounded-full font-mono text-xs sm:text-sm font-black tracking-widest uppercase flex items-center gap-3 transition-all cursor-pointer shadow-xl active:scale-95 hover:brightness-110"
+                style={{
+                  backgroundColor: selectedScenario.accentColor,
+                  color: '#000000',
+                  boxShadow: `0 0 30px ${selectedScenario.themeColor}88`,
+                }}
+              >
+                <Mic className="w-4 h-4 animate-pulse" />
+                <span>點擊開始錄音 (START RECORDING)</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleToggleRecording}
+                className="px-8 py-4 rounded-full bg-rose-600 hover:bg-rose-500 border border-rose-400 text-white font-mono text-xs sm:text-sm font-black tracking-widest uppercase flex items-center gap-3 transition-all cursor-pointer shadow-[0_0_35px_rgba(244,63,94,0.6)] active:scale-95 animate-pulse"
+              >
+                <Square className="w-4 h-4 fill-current" />
+                <span>正在錄音中... 點擊結束 (FINISH & SCORE)</span>
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -21,9 +21,10 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   const [playProgress, setPlayProgress] = useState(0);
   const [ttsSupported, setTtsSupported] = useState(true);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressTimerRef = useRef<number | null>(null);
 
-  // 0. 全域終止所有音訊與語音播放 (A/B 41, A/B 42, 7.35 零延遲熔斷)
+  // 0. 全域終止所有音訊、視訊與語音播放 (A/B 41, A/B 42, 7.35 零延遲熔斷)
   const stopAllAudio = useCallback(() => {
     if (progressTimerRef.current) {
       clearInterval(progressTimerRef.current);
@@ -42,16 +43,39 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
       audioRef.current.currentTime = 0;
     }
 
+    // 終止 HTMLVideo 實體示範影片 (A/B 54, 7.48 GPU 解碼資源防死鎖)
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+
     setIsPlaying(false);
     onPlayStateChange?.(false);
   }, [onPlayStateChange]);
 
-  // 1. 核心發聲引擎：雙軌熱抽換 (A/B 38 實體音檔優先，A/B 39 Web Speech TTS 兜底)
+  // 1. 核心發聲/視訊引擎：三軌熱抽換 (A/B 53 示範影片優先，A/B 38 實體音檔次之，A/B 39 Web Speech TTS 兜底)
   const playDemoVoice = useCallback(() => {
     stopAllAudio();
     setIsPlaying(true);
     setPlayProgress(0);
     onPlayStateChange?.(true);
+
+    // 軌道 S：若有示範影片 (MOV / MP4)，優先透過視訊元素播放
+    if (scenario.videoPromptUrl && videoRef.current) {
+      const video = videoRef.current;
+      video.currentTime = 0;
+      video
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch((err) => {
+          console.warn('[VideoPrompt] 自動播放受阻 (需要使用者交互):', err);
+          setIsPlaying(false);
+          onPlayStateChange?.(false);
+        });
+      return;
+    }
 
     // 軌道 A：若有實體原音音檔 (MP3 / WAV)，優先播放
     if (scenario.audioPromptUrl) {
@@ -246,8 +270,48 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
           </div>
         </div>
 
-        {/* 示範台詞主視覺 */}
-        <div className="text-center py-2 px-2">
+        {/* 示範台詞與視訊播放主視覺 (A/B 53 Dual Video/Text Viewport) */}
+        <div className="text-center py-2 px-2 flex flex-col items-center">
+          {/* 若情境配有示範影片，渲染原生高相容 Video 容器 */}
+          {scenario.videoPromptUrl && (
+            <div className="w-full max-w-md mx-auto mb-4 rounded-xl overflow-hidden border border-white/20 bg-black/80 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative group">
+              <video
+                ref={videoRef}
+                playsInline
+                preload="auto"
+                className="w-full h-auto max-h-[220px] object-contain mx-auto"
+                onTimeUpdate={(e) => {
+                  const v = e.currentTarget;
+                  if (v.duration > 0) {
+                    setPlayProgress(Math.min(100, (v.currentTime / v.duration) * 100));
+                  }
+                }}
+                onEnded={() => {
+                  setPlayProgress(100);
+                  setIsPlaying(false);
+                  onPlayStateChange?.(false);
+                }}
+              >
+                <source src={scenario.videoPromptUrl} type="video/mp4" />
+                <source src={scenario.videoPromptUrl.replace('.mp4', '.mov')} type="video/quicktime" />
+                您的瀏覽器不支援內嵌示範影片播放。
+              </video>
+              {!isPlaying && (
+                <div
+                  onClick={playDemoVoice}
+                  className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center cursor-pointer transition-opacity group-hover:bg-black/20"
+                >
+                  <div
+                    className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform group-hover:scale-110 active:scale-95"
+                    style={{ backgroundColor: scenario.accentColor, color: '#000000' }}
+                  >
+                    <Play className="w-6 h-6 fill-current ml-0.5" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <p className="text-[11px] text-zinc-500 tracking-widest uppercase mb-2">
             角色定位：{scenario.character}
           </p>

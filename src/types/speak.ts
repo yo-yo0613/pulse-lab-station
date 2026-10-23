@@ -36,6 +36,7 @@ export interface PromptScenario {
   durationSeconds: number;
   referenceVolumeCurve: number[]; // 歸一化標準音量曲線 (0~100)
   referencePitchCurve: number[];  // 歸一化標準音高曲線 (0~1)
+  videoPromptUrl?: string;        // 實體 MP4/MOV 示範影片路徑 (A/B 53 雙軌容器)
   audioPromptUrl?: string;        // 實體 MP3/WAV 示範錄音路徑 (A/B 38 雙軌架構)
   ttsConfig?: {                   // TTS 語氣參數 (A/B 39 Web Speech 語氣合成)
     pitch: number;                // 0.5 ~ 1.5 語調高低

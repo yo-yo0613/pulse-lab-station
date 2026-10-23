@@ -13,6 +13,7 @@ export const PROMPT_SCENARIOS: PromptScenario[] = [
     durationSeconds: 5,
     referenceVolumeCurve: [15, 25, 40, 85, 95, 90, 70, 80, 95, 100, 85, 40, 20],
     referencePitchCurve: [0.3, 0.4, 0.5, 0.8, 0.95, 0.9, 0.7, 0.85, 0.95, 1.0, 0.75, 0.4, 0.3],
+    videoPromptUrl: '/video/demo_prompt.mp4',
     ttsConfig: { pitch: 1.15, rate: 1.05 },
   },
   {
@@ -27,6 +28,7 @@ export const PROMPT_SCENARIOS: PromptScenario[] = [
     durationSeconds: 5,
     referenceVolumeCurve: [20, 28, 35, 42, 38, 45, 40, 36, 42, 40, 32, 25, 15],
     referencePitchCurve: [0.15, 0.2, 0.25, 0.2, 0.18, 0.22, 0.2, 0.19, 0.25, 0.2, 0.15, 0.12, 0.1],
+    videoPromptUrl: '/video/demo_prompt.mp4',
     ttsConfig: { pitch: 0.65, rate: 0.85 },
   },
   {
@@ -41,6 +43,7 @@ export const PROMPT_SCENARIOS: PromptScenario[] = [
     durationSeconds: 5,
     referenceVolumeCurve: [10, 18, 25, 20, 35, 40, 50, 75, 90, 95, 80, 50, 20],
     referencePitchCurve: [0.4, 0.5, 0.45, 0.35, 0.55, 0.6, 0.7, 0.85, 0.95, 0.9, 0.7, 0.5, 0.3],
+    videoPromptUrl: '/video/demo_prompt.mp4',
     ttsConfig: { pitch: 0.85, rate: 0.9 },
   },
   {
@@ -55,6 +58,7 @@ export const PROMPT_SCENARIOS: PromptScenario[] = [
     durationSeconds: 5,
     referenceVolumeCurve: [30, 60, 75, 85, 70, 80, 95, 90, 85, 90, 75, 40, 15],
     referencePitchCurve: [0.5, 0.75, 0.85, 0.9, 0.8, 0.85, 0.95, 0.9, 0.85, 0.9, 0.7, 0.4, 0.3],
+    videoPromptUrl: '/video/demo_prompt.mp4',
     ttsConfig: { pitch: 1.35, rate: 1.2 },
   },
 ];
