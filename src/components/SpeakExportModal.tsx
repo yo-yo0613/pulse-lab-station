@@ -39,8 +39,10 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [activeTab, setActiveTab] = useState<'poster' | 'video'>('poster');
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const prevBlobUrlRef = useRef<string>('');
@@ -54,12 +56,19 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     setPosterBlobUrl(newUrl);
   }, []);
 
+  // 影音同步聯動播放器：野原廣志畫面 + 玩家錄音
   const togglePlayAudio = () => {
     if (!userAudioUrl) return;
 
-    if (isPlayingAudio && audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (isPlayingAudio) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if (previewVideoRef.current) {
+        previewVideoRef.current.pause();
+        previewVideoRef.current.currentTime = 0;
+      }
       setIsPlayingAudio(false);
       onPlayStateChange?.(false);
       return;
@@ -73,13 +82,26 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     const audio = new Audio(userAudioUrl);
     audioRef.current = audio;
 
+    // 若處於影片模式或有預覽影片，同步播放畫面
+    if (previewVideoRef.current) {
+      previewVideoRef.current.currentTime = 0;
+      previewVideoRef.current.play().catch(() => {});
+    }
+
     audio.onended = () => {
       setIsPlayingAudio(false);
+      if (previewVideoRef.current) {
+        previewVideoRef.current.pause();
+        previewVideoRef.current.currentTime = 0;
+      }
       onPlayStateChange?.(false);
     };
 
     audio.onerror = () => {
       setIsPlayingAudio(false);
+      if (previewVideoRef.current) {
+        previewVideoRef.current.pause();
+      }
       onPlayStateChange?.(false);
     };
 
@@ -100,6 +122,10 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
+      }
+      if (previewVideoRef.current) {
+        previewVideoRef.current.pause();
+        previewVideoRef.current = null;
       }
       onPlayStateChange?.(false);
       if (prevBlobUrlRef.current) {
@@ -511,24 +537,107 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       </div>
 
       <div className="relative flex flex-col lg:flex-row items-center gap-8 max-w-5xl w-full my-auto">
-        {/* 左側：9:16 海報預覽 */}
-        <div className="relative w-[320px] sm:w-[360px] h-[570px] sm:h-[640px] bg-[#0A0A0A] border border-white/20 shadow-[0_0_50px_rgba(255,0,85,0.25)] flex items-center justify-center overflow-hidden">
-          {isGenerating ? (
-            <div className="flex flex-col items-center gap-3 text-white/60">
-              <Sparkles className="w-8 h-8 text-[#FF0055] animate-spin" />
-              <span className="text-xs tracking-widest text-[#00F0FF]">
-                SYNTHESIZING ACOUSTIC CARD...
-              </span>
-            </div>
-          ) : (
-            <img src={posterBlobUrl} alt="Voice Card" className="w-full h-full object-contain" />
-          )}
+        {/* 左側：9:16 海報預覽 或 對嘴配音影片預覽 (林妤安需求：放上影片+錄音) */}
+        <div className="flex flex-col items-center gap-2">
+          {/* Tab 切換：高清海報 vs 配音影片 */}
+          <div className="flex items-center gap-2 bg-black/60 p-1 rounded-xl border border-white/10 backdrop-blur-md">
+            <button
+              onClick={() => setActiveTab('poster')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'poster'
+                  ? 'bg-white/20 text-white shadow'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              📄 聲態海報 (POSTER)
+            </button>
+            <button
+              onClick={() => setActiveTab('video')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'video'
+                  ? 'bg-[#00F0FF]/20 text-[#00F0FF] border border-[#00F0FF]/40 shadow-[0_0_15px_rgba(0,240,255,0.3)]'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              🎬 配音影片 (DUBBING VIDEO)
+            </button>
+          </div>
 
-          {/* 四角準心 */}
-          <div className="absolute top-2 left-2 w-3 h-3 border-t border-l border-white/50" />
-          <div className="absolute top-2 right-2 w-3 h-3 border-t border-r border-white/50" />
-          <div className="absolute bottom-2 left-2 w-3 h-3 border-b border-l border-white/50" />
-          <div className="absolute bottom-2 right-2 w-3 h-3 border-b border-r border-white/50" />
+          <div className="relative w-[320px] sm:w-[360px] h-[540px] sm:h-[600px] bg-[#0A0A0A] border border-white/20 shadow-[0_0_50px_rgba(255,0,85,0.25)] flex flex-col items-center justify-center overflow-hidden rounded-xl">
+            {activeTab === 'poster' ? (
+              isGenerating ? (
+                <div className="flex flex-col items-center gap-3 text-white/60">
+                  <Sparkles className="w-8 h-8 text-[#FF0055] animate-spin" />
+                  <span className="text-xs tracking-widest text-[#00F0FF]">
+                    SYNTHESIZING ACOUSTIC CARD...
+                  </span>
+                </div>
+              ) : (
+                <img src={posterBlobUrl} alt="Voice Card" className="w-full h-full object-contain" />
+              )
+            ) : (
+              /* 配音影片播放區：野原廣志畫面 + 玩家模仿原音同步播放 */
+              <div className="w-full h-full flex flex-col items-center justify-between p-4 bg-black/90">
+                <div className="text-center pt-2">
+                  <span className="text-[11px] font-bold text-cyan-400 tracking-wider">
+                    ✦ 你的專屬角色配音成片 ✦
+                  </span>
+                  <p className="text-[10px] text-zinc-400 mt-0.5">
+                    畫面：野原廣志 // 聲音：玩家現場演繹
+                  </p>
+                </div>
+
+                {scenario.videoPromptUrl && (
+                  <div className="w-full rounded-xl overflow-hidden border border-white/20 bg-black aspect-video relative shadow-lg">
+                    <video
+                      ref={previewVideoRef}
+                      playsInline
+                      muted
+                      preload="auto"
+                      className="w-full h-full object-contain mx-auto"
+                    >
+                      <source src={scenario.videoPromptUrl} type="video/mp4" />
+                      <source src={scenario.videoPromptUrl.replace('.mp4', '.mov')} type="video/quicktime" />
+                    </video>
+                  </div>
+                )}
+
+                <div className="w-full text-center py-2 px-3 bg-white/5 rounded-xl border border-white/10">
+                  <h3 className="text-lg font-black text-white">「{scenario.line}」</h3>
+                  <p className="text-[10px] text-zinc-400 mt-1">
+                    語音相似度：<b className="text-[#FFE600]">{scoreResult.overallScore}%</b> ({scoreResult.rankTitle})
+                  </p>
+                </div>
+
+                <button
+                  onClick={togglePlayAudio}
+                  className={`w-full py-3.5 rounded-xl text-xs font-bold tracking-wider flex items-center justify-center gap-2.5 transition-all cursor-pointer border ${
+                    isPlayingAudio
+                      ? 'bg-amber-500/30 border-amber-500 text-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.4)] animate-pulse'
+                      : 'bg-[#00F0FF]/20 border-[#00F0FF]/40 text-[#00F0FF] hover:bg-[#00F0FF]/30'
+                  }`}
+                >
+                  {isPlayingAudio ? (
+                    <>
+                      <Square className="w-4 h-4 fill-current" />
+                      <span>⏹ 暫停播放配音成片 (PAUSE)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-4 h-4" />
+                      <span>▶ 播放我的配音成片 (PLAY DUBBING)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* 四角準心 */}
+            <div className="absolute top-2 left-2 w-3 h-3 border-t border-l border-white/50 pointer-events-none" />
+            <div className="absolute top-2 right-2 w-3 h-3 border-t border-r border-white/50 pointer-events-none" />
+            <div className="absolute bottom-2 left-2 w-3 h-3 border-b border-l border-white/50 pointer-events-none" />
+            <div className="absolute bottom-2 right-2 w-3 h-3 border-b border-r border-white/50 pointer-events-none" />
+          </div>
         </div>
 
         {/* 右側：掃碼與控制項 */}

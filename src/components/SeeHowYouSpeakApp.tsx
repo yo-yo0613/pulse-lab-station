@@ -24,9 +24,13 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const [selectedScenario, setSelectedScenario] = useState<PromptScenario>(PROMPT_SCENARIOS[0]);
   const [isActivelyRecording, setIsActivelyRecording] = useState<boolean>(false);
   const [elapsedRecordTime, setElapsedRecordTime] = useState<number>(0);
+  const [recordProgress, setRecordProgress] = useState<number>(0); // 0 ~ 100%
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [userRecordedVolume, setUserRecordedVolume] = useState<Float32Array>(new Float32Array(0));
   const [userRecordedPitch, setUserRecordedPitch] = useState<Float32Array>(new Float32Array(0));
+
+  // 錄音階段專用示範影片播放 Ref (影音精準對嘴同步)
+  const recordingVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // 手動 Toggle 錄音防連擊防禦 (A/B 55, 7.49 300ms 點擊互鎖)
   const lastToggleTimeRef = useRef<number>(0);
@@ -74,6 +78,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       animFrameIdRef.current = null;
     }
     stopRecording();
+
+    // 同步暫停並重置錄音背景對嘴影片
+    if (recordingVideoRef.current) {
+      recordingVideoRef.current.pause();
+      recordingVideoRef.current.currentTime = 0;
+    }
 
     // 取得截斷後的有效錄音長度
     const { volume, pitch } = getValidRecordings();
@@ -142,10 +152,15 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     await unlockAudio();
     setIsActivelyRecording(false);
     setElapsedRecordTime(0);
+    setRecordProgress(0);
+    if (recordingVideoRef.current) {
+      recordingVideoRef.current.pause();
+      recordingVideoRef.current.currentTime = 0;
+    }
     setSpeakState('RECORDING');
   }, [unlockAudio, setMuteInput]);
 
-  // 手動 Toggle 錄音開關：點一次開始，再點一次結束 (A/B 55, 7.49 互鎖防禦, 7.50 12s 看門狗)
+  // 影音精準對嘴錄音：點擊開始 ➔ 影片播放 + 進度軸推進 ➔ 影片結束自動停止錄音結算
   const handleToggleRecording = useCallback(async () => {
     const now = performance.now();
     // 300ms 點擊互鎖防抖動
@@ -155,21 +170,35 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     lastToggleTimeRef.current = now;
 
     if (!isActivelyRecording) {
-      // 點擊【開始錄音】
+      // 點擊【開始錄音】：同時啟動麥克風與示範影片靜音播放
       await unlockAudio();
       setMuteInput(false);
       startRecording();
       setIsActivelyRecording(true);
       setElapsedRecordTime(0);
+      setRecordProgress(0);
+
+      if (recordingVideoRef.current) {
+        recordingVideoRef.current.currentTime = 0;
+        recordingVideoRef.current.play().catch((e) => {
+          console.warn('[RecordingVideo] 自動對嘴影片播放阻擋:', e);
+        });
+      }
 
       if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
+
+      const targetDuration = selectedScenario.durationSeconds || 3.5;
 
       const checkDuration = () => {
         const elapsed = getElapsedHardwareTime();
         setElapsedRecordTime(parseFloat(elapsed.toFixed(1)));
 
-        // 12 秒安全看門狗上限 (Defense 7.50，防止離席佔線)
-        if (elapsed >= 12.0) {
+        // 計算進度百分比 (以影片時長或場景標準時長為基準)
+        const progress = Math.min(100, (elapsed / targetDuration) * 100);
+        setRecordProgress(progress);
+
+        // 若無影片結束事件，依據 targetDuration 或 12 秒安全看門狗自動停止
+        if (elapsed >= targetDuration) {
           finishRecording();
         } else {
           animFrameIdRef.current = requestAnimationFrame(checkDuration);
@@ -178,10 +207,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       animFrameIdRef.current = requestAnimationFrame(checkDuration);
     } else {
-      // 點擊【結束錄音】
+      // 使用者若想提早結束
       finishRecording();
     }
-  }, [isActivelyRecording, unlockAudio, setMuteInput, startRecording, getElapsedHardwareTime, finishRecording]);
+  }, [isActivelyRecording, unlockAudio, setMuteInput, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording]);
 
   // 清除計時器
   useEffect(() => {
@@ -505,9 +534,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         />
       )}
 
-      {/* 狀態 3：RECORDING (即時錄音與字體渲染) */}
+      {/* 狀態 3：RECORDING (即時錄音與影音對嘴同步) */}
       {speakState === 'RECORDING' && (
-        <div className="relative w-full h-full flex flex-col justify-between p-6 z-20">
+        <div className="relative w-full h-full flex flex-col justify-between p-4 sm:p-6 z-20">
           {/* 背景 2.5D Canvas 音訊粒子與核心 */}
           <VoiceVisualizer3D
             audioMetrics={audioMetrics}
@@ -520,45 +549,86 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             audioMetrics={audioMetrics}
           />
 
-          {/* 錄音頂部狀態 HUD (A/B 55 手動 Toggle 狀態與時長顯示) */}
-          <div className="relative z-30 flex items-center justify-between pt-16 px-4">
-            <div className="flex items-center gap-3 bg-black/60 border border-white/15 px-4 py-2 rounded-full backdrop-blur-md">
-              <span
-                className={`w-3 h-3 rounded-full ${
-                  isActivelyRecording ? 'bg-rose-500 animate-ping' : 'bg-amber-400'
-                }`}
-              />
-              <span
-                className={`text-xs font-mono font-bold ${
-                  isActivelyRecording ? 'text-rose-400' : 'text-amber-400'
-                }`}
-              >
-                {isActivelyRecording ? 'REC 正在錄音模仿中' : 'STANDBY 待命錄音中'}
-              </span>
-              <span className="text-xs font-mono text-zinc-400">|</span>
-              <span className="text-xs font-mono text-white">
-                {isActivelyRecording
-                  ? `已錄製 ${elapsedRecordTime.toFixed(1)} 秒 (上限 12s)`
-                  : '請點擊下方按鈕開始'}
-              </span>
+          {/* 錄音頂部狀態 HUD 與進度軸 (影片同步進度) */}
+          <div className="relative z-30 flex flex-col gap-2 pt-16 px-2 sm:px-4 max-w-2xl mx-auto w-full">
+            <div className="flex items-center justify-between bg-black/70 border border-white/15 px-4 py-2 rounded-full backdrop-blur-md">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className={`w-3 h-3 rounded-full ${
+                    isActivelyRecording ? 'bg-rose-500 animate-ping' : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`text-xs font-mono font-bold ${
+                    isActivelyRecording ? 'text-rose-400' : 'text-amber-400'
+                  }`}
+                >
+                  {isActivelyRecording ? 'REC 影音同步錄音中' : 'STANDBY 待命錄音中'}
+                </span>
+                <span className="text-xs font-mono text-zinc-400">|</span>
+                <span className="text-xs font-mono text-white">
+                  {isActivelyRecording
+                    ? `${elapsedRecordTime.toFixed(1)}s / ${(selectedScenario.durationSeconds || 3.5).toFixed(1)}s`
+                    : '點擊下方開始'}
+                </span>
+              </div>
+
+              {/* 即時音量 */}
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="text-zinc-400">
+                  VOL: <b className="text-white">{Math.round(audioMetrics.smoothVolume)}%</b>
+                </span>
+                <span className="text-zinc-500 hidden sm:inline">
+                  GATE: {audioMetrics.isVoiceActive ? '語音' : '靜音'}
+                </span>
+              </div>
             </div>
 
-            {/* 即時音高與音量數據 */}
-            <div className="flex items-center gap-3 bg-black/60 border border-white/15 px-4 py-2 rounded-full backdrop-blur-md text-xs font-mono">
-              <span className="text-zinc-400">
-                VOL: <b className="text-white">{Math.round(audioMetrics.smoothVolume)}%</b>
-              </span>
-              <span className="text-zinc-400">
-                PITCH: <b style={{ color: selectedScenario.accentColor }}>{Math.round(audioMetrics.pitchHz)} Hz</b>
-              </span>
-              <span className="text-zinc-500">
-                GATE: {audioMetrics.isVoiceActive ? '語音觸發' : '環境底噪'}
-              </span>
+            {/* 精準影音進度軸 (林妤安要求：進度軸顯示錄音進度) */}
+            <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden border border-white/10 shadow-inner">
+              <div
+                className="h-full transition-all duration-75 rounded-full"
+                style={{
+                  width: `${recordProgress}%`,
+                  backgroundColor: selectedScenario.accentColor,
+                  boxShadow: `0 0 10px ${selectedScenario.accentColor}`,
+                }}
+              />
             </div>
           </div>
 
-          {/* 中央動態字體展示區 (CSS 直通管線 60fps) */}
-          <div className="relative z-30 flex-1 flex flex-col items-center justify-center px-4">
+          {/* 中央影音對嘴畫面與動態字體 */}
+          <div className="relative z-30 flex-1 flex flex-col items-center justify-center px-4 gap-4">
+            {/* 示範對嘴影片容器 (點擊錄音時同步播放，影片結束自動停止錄音) */}
+            {selectedScenario.videoPromptUrl && (
+              <div className="w-full max-w-xs sm:max-w-sm rounded-xl overflow-hidden border border-white/20 bg-black/90 shadow-[0_0_25px_rgba(0,0,0,0.8)] relative aspect-video">
+                <video
+                  ref={recordingVideoRef}
+                  playsInline
+                  muted
+                  preload="auto"
+                  className="w-full h-full object-contain mx-auto"
+                  onEnded={() => {
+                    // 影片播放完畢 ➔ 錄音自動停止並結算！
+                    if (isActivelyRecording) {
+                      finishRecording();
+                    }
+                  }}
+                >
+                  <source src={selectedScenario.videoPromptUrl} type="video/mp4" />
+                  <source src={selectedScenario.videoPromptUrl.replace('.mp4', '.mov')} type="video/quicktime" />
+                </video>
+                {!isActivelyRecording && (
+                  <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center">
+                    <span className="text-[11px] font-mono font-bold text-zinc-300 bg-black/60 px-3 py-1 rounded-full border border-white/20">
+                      🎬 準備對嘴：點擊下方開始
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 動態字體直通展示 */}
             <KineticTypography
               text={selectedScenario.line}
               audioMetrics={audioMetrics}
@@ -567,14 +637,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               accentColor={selectedScenario.accentColor}
             />
 
-            <p className="mt-8 text-xs font-mono text-zinc-400 tracking-wider">
+            <p className="text-xs font-mono text-zinc-400 tracking-wider">
               {isActivelyRecording
-                ? '✦ 用你的情緒與聲調 大聲喊出這句話，說完後點擊結束 ✦'
-                : '✦ 請點擊下方「開始錄音」，對著麥克風大聲模仿 ✦'}
+                ? '✦ 請看著影片中角色說話節奏，同步喊出這句話！影片結束即自動結算 ✦'
+                : '✦ 請點擊下方「開始模仿錄音」，配合影片對嘴喊出！ ✦'}
             </p>
           </div>
 
-          {/* 底部控制器 (手動 Toggle：點擊開始 ➔ 點擊結束，A/B 55) */}
+          {/* 底部控制器 */}
           <div className="relative z-30 flex items-center justify-center pb-8 gap-4">
             {!isActivelyRecording ? (
               <button
@@ -587,7 +657,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 }}
               >
                 <Mic className="w-4 h-4 animate-pulse" />
-                <span>點擊開始錄音 (START RECORDING)</span>
+                <span>點擊開始模仿錄音 (START DUBBING)</span>
               </button>
             ) : (
               <button
@@ -595,7 +665,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 className="px-8 py-4 rounded-full bg-rose-600 hover:bg-rose-500 border border-rose-400 text-white font-mono text-xs sm:text-sm font-black tracking-widest uppercase flex items-center gap-3 transition-all cursor-pointer shadow-[0_0_35px_rgba(244,63,94,0.6)] active:scale-95 animate-pulse"
               >
                 <Square className="w-4 h-4 fill-current" />
-                <span>正在錄音中... 點擊結束 (FINISH & SCORE)</span>
+                <span>正在對嘴錄音中... (影片結束將自動結算)</span>
               </button>
             )}
           </div>
