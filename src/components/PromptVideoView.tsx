@@ -207,9 +207,9 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   };
 
   return (
-    <div className="relative z-20 w-full min-h-screen flex flex-col justify-between pt-24 pb-6 px-4 sm:px-8 max-w-5xl mx-auto font-mono select-none overflow-y-auto">
-      {/* 1. 頂部情境切換 Tab 列 (A/B 42 切換即中斷前音，加深邊界避免被 Navbar 遮擋) */}
-      <div className="w-full flex items-center justify-center gap-2 overflow-x-auto py-2 mb-2 shrink-0">
+    <div className="relative z-20 w-full min-h-screen flex flex-col justify-between pt-16 sm:pt-24 pb-8 px-3 sm:px-8 max-w-5xl mx-auto font-mono select-none overflow-y-auto">
+      {/* 1. 頂部情境切換 Tab 列 (手機端緊湊平鋪可橫向滾動) */}
+      <div className="w-full flex items-center justify-start sm:justify-center gap-1.5 sm:gap-2 overflow-x-auto py-1 sm:py-2 mb-1 sm:mb-2 shrink-0 no-scrollbar">
         {scenarios.map((sc) => {
           const isActive = sc.id === scenario.id;
           return (
@@ -221,38 +221,38 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                   onSelectScenario(sc);
                 }
               }}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer border flex items-center gap-2 shrink-0 ${
+              className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-mono font-bold tracking-wider uppercase transition-all cursor-pointer border flex items-center gap-1.5 sm:gap-2 shrink-0 ${
                 isActive
                   ? 'bg-white/15 border-white text-white shadow-[0_0_15px_rgba(255,255,255,0.25)]'
                   : 'bg-black/60 border-white/15 text-zinc-400 hover:text-white hover:border-white/30'
               }`}
             >
               <span
-                className="w-2 h-2 rounded-full"
+                className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0"
                 style={{ backgroundColor: sc.accentColor }}
               />
-              <span>{sc.title.split('//')[0]}</span>
+              <span className="whitespace-nowrap">{sc.title.split('//')[0]}</span>
             </button>
           );
         })}
       </div>
 
-      {/* 2. 中央核心主卡片：方案 A 左右分割響應式架構 (Desktop 左右雙欄 0 滾動 / Mobile 上下單欄) */}
-      <div className="w-full my-auto bg-zinc-950/90 border border-white/15 p-5 sm:p-7 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.9)] backdrop-blur-xl flex flex-col gap-5">
-        {/* 卡片頂部資訊列 */}
-        <div className="flex items-center justify-between border-b border-white/10 pb-3">
-          <div className="flex items-center gap-2.5">
+      {/* 2. 中央核心主卡片：手機上下流暢單欄 + 桌面左右雙欄 */}
+      <div className="w-full my-auto bg-zinc-950/90 border border-white/15 p-4 sm:p-7 rounded-2xl shadow-[0_0_60px_rgba(0,0,0,0.9)] backdrop-blur-xl flex flex-col gap-4 sm:gap-5">
+        {/* 卡片頂部資訊列 (單行響應式適配) */}
+        <div className="flex items-center justify-between border-b border-white/10 pb-2.5 sm:pb-3 gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span
-              className={`w-2.5 h-2.5 rounded-full ${isPlaying ? 'animate-ping' : ''}`}
+              className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${isPlaying ? 'animate-ping' : ''}`}
               style={{ backgroundColor: scenario.accentColor }}
             />
-            <span className="text-xs font-bold text-white tracking-widest uppercase">
-              PROMPT DEMO // 原片語氣示範
+            <span className="text-[10px] sm:text-xs font-bold text-white tracking-widest uppercase truncate">
+              PROMPT DEMO
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <span
-              className="text-[11px] px-2.5 py-0.5 rounded-full border font-bold"
+              className="text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-0.5 rounded-full border font-bold truncate max-w-[150px] sm:max-w-none text-right"
               style={{
                 borderColor: `${scenario.themeColor}88`,
                 color: scenario.accentColor,
@@ -262,20 +262,20 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
               {scenario.emotion}
             </span>
             {isPlaying && (
-              <span className="text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1 font-bold">
-                <Volume2 className="w-3 h-3" />
-                示範發聲中
+              <span className="text-[9px] sm:text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/30 px-1.5 sm:px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1 font-bold shrink-0">
+                <Volume2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                示範中
               </span>
             )}
           </div>
         </div>
 
-        {/* 核心雙欄佈局：左側視訊/聲波 + 右側台詞/行動 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+        {/* 核心佈局：手機上下單欄 / 桌面左右雙欄 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-center">
           {/* 左欄：示範影片播放器 + 標準聲波能量曲線 */}
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:gap-4">
             {scenario.videoPromptUrl && (
-              <div className="w-full rounded-xl overflow-hidden border border-white/20 bg-black/90 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative group aspect-video flex items-center justify-center">
+              <div className="w-full rounded-xl overflow-hidden border border-white/20 bg-black/90 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative group aspect-video max-h-[190px] sm:max-h-none flex items-center justify-center">
                 <video
                   ref={videoRef}
                   playsInline
@@ -303,10 +303,10 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                     className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center cursor-pointer transition-opacity group-hover:bg-black/20"
                   >
                     <div
-                      className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform group-hover:scale-110 active:scale-95"
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shadow-lg transition-transform group-hover:scale-110 active:scale-95"
                       style={{ backgroundColor: scenario.accentColor, color: '#000000' }}
                     >
-                      <Play className="w-6 h-6 fill-current ml-0.5" />
+                      <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
                     </div>
                   </div>
                 )}
@@ -314,19 +314,19 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
             )}
 
             {/* 示範黃金聲波能量柱列 */}
-            <div className="w-full bg-black/60 border border-white/10 p-3.5 rounded-xl flex flex-col gap-2">
-              <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                <span className="flex items-center gap-1.5 font-bold">
-                  <Volume2 className="w-3.5 h-3.5" style={{ color: scenario.accentColor }} />
-                  標準聲波能量曲線
+            <div className="w-full bg-black/60 border border-white/10 p-2.5 sm:p-3.5 rounded-xl flex flex-col gap-1.5 sm:gap-2">
+              <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-zinc-400">
+                <span className="flex items-center gap-1 sm:gap-1.5 font-bold truncate">
+                  <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" style={{ color: scenario.accentColor }} />
+                  標準聲波能量
                 </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-500">
-                    {isPlaying ? 'PLAYING...' : 'COMPLETED'}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[9px] sm:text-[10px] text-zinc-500">
+                    {isPlaying ? 'PLAYING' : 'READY'}
                   </span>
                   <button
                     onClick={playDemoVoice}
-                    className="text-[10px] text-white bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer font-bold transition-all active:scale-95"
+                    className="text-[9px] sm:text-[10px] text-white bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer font-bold transition-all active:scale-95"
                     title="重新播放示範語音"
                   >
                     <RotateCcw className="w-2.5 h-2.5" /> 重播
@@ -335,7 +335,7 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
               </div>
 
               {/* 聲波長條圖 */}
-              <div className="h-10 w-full flex items-end justify-between gap-1 pt-1">
+              <div className="h-8 sm:h-10 w-full flex items-end justify-between gap-1 pt-1">
                 {scenario.referenceVolumeCurve.map((val, idx) => {
                   const active = (idx / scenario.referenceVolumeCurve.length) * 100 <= playProgress;
                   return (
@@ -353,31 +353,31 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
               </div>
 
               {/* 發聲技術指示徽章 */}
-              <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-0.5">
-                <span className="flex items-center gap-1">
-                  <Volume2 className="w-3 h-3 text-emerald-400" />
+              <div className="flex items-center justify-between text-[9px] sm:text-[10px] text-zinc-500 pt-0.5">
+                <span className="flex items-center gap-1 truncate">
+                  <Volume2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-emerald-400 shrink-0" />
                   {scenario.audioPromptUrl
-                    ? '高傳真原聲雙軌'
+                    ? 'HQ 原聲'
                     : ttsSupported
-                    ? '動態語氣合成 (TTS)'
-                    : '波形視覺示範'}
+                    ? '語氣合成 (TTS)'
+                    : '波形示範'}
                 </span>
-                <span className="text-zinc-400">
-                  {isPlaying ? '🔇 麥克風已靜音' : '🎙️ 錄音通道已就緒'}
+                <span className="text-zinc-400 shrink-0">
+                  {isPlaying ? '🔇 麥克風已靜音' : '🎙️ 錄音就緒'}
                 </span>
               </div>
             </div>
           </div>
 
           {/* 右欄：台詞主視覺 + 挑戰提示 + 啟動模仿大按鈕 */}
-          <div className="flex flex-col justify-between gap-5 h-full">
-            <div className="flex flex-col gap-3 text-left">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
-                  角色定位：
+          <div className="flex flex-col justify-between gap-3 sm:gap-5 h-full">
+            <div className="flex flex-col gap-2 sm:gap-3 text-left">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="text-[10px] sm:text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
+                  角色：
                 </span>
                 <span
-                  className="text-xs font-bold px-2 py-0.5 rounded border"
+                  className="text-[11px] sm:text-xs font-bold px-2 py-0.5 rounded border"
                   style={{
                     color: scenario.accentColor,
                     borderColor: `${scenario.themeColor}66`,
@@ -388,36 +388,36 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                 </span>
               </div>
 
-              <div className="py-2">
-                <p className="text-[11px] text-zinc-500 tracking-wider mb-1">
+              <div className="py-1 sm:py-2">
+                <p className="text-[10px] sm:text-[11px] text-zinc-500 tracking-wider mb-1">
                   // 請聽原片語調，準備模仿：
                 </p>
-                <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-wide leading-tight">
+                <h2 className="text-2xl sm:text-4xl md:text-5xl font-black text-white tracking-wide leading-tight">
                   「{scenario.line}」
                 </h2>
               </div>
 
               {/* 挑戰提示 */}
-              <div className="text-xs tracking-wider flex items-center gap-2.5 bg-white/5 border border-white/10 p-3 rounded-xl text-zinc-300">
-                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="text-[11px] sm:text-xs tracking-wider flex items-center gap-2 bg-white/5 border border-white/10 p-2.5 sm:p-3 rounded-xl text-zinc-300">
+                <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
                 <span>{scenario.hint}</span>
               </div>
             </div>
 
             {/* 啟動按鈕 (點擊直接進入錄音，A/B 41 零延遲熔斷示範音) */}
-            <div className="w-full pt-2">
+            <div className="w-full pt-1 sm:pt-2 pb-2">
               <button
                 onClick={handleProceedToRecord}
-                className="w-full py-4 rounded-xl font-black text-xs sm:text-sm tracking-widest uppercase flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xl active:scale-95 hover:brightness-110"
+                className="w-full py-3.5 sm:py-4 rounded-xl font-black text-xs sm:text-sm tracking-widest uppercase flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xl active:scale-95 hover:brightness-110"
                 style={{
                   backgroundColor: scenario.accentColor,
                   color: '#000000',
                   boxShadow: `0 0 30px ${scenario.themeColor}66`,
                 }}
               >
-                <Play className="w-4 h-4 fill-current" />
-                <span>我聽懂了，換我模仿 (START CHALLENGE)</span>
-                <ArrowRight className="w-4 h-4" />
+                <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
+                <span>換我模仿 (START CHALLENGE)</span>
+                <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               </button>
             </div>
           </div>
@@ -425,8 +425,8 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
       </div>
 
       {/* 底部輔助空間 */}
-      <div className="w-full py-1 text-center">
-        <span className="text-[10px] text-zinc-500">
+      <div className="w-full py-1 text-center shrink-0">
+        <span className="text-[9px] sm:text-[10px] text-zinc-500">
           SEE HOW YOU SPEAK // 聲音的形狀，由你決定
         </span>
       </div>

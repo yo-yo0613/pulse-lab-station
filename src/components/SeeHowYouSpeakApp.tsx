@@ -288,35 +288,35 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   });
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#080808] text-white font-mono select-none">
-      {/* 頂部全域狀態 HUD 列 */}
-      <header className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-6 py-4 pointer-events-auto bg-gradient-to-b from-black/80 via-black/40 to-transparent">
-        {/* 左側 LOGO & 模式指示 (連續點擊 5 次開啟維護者暗樁抽屜) */}
-        <div className="flex items-center gap-3">
+    <div className="relative w-screen min-h-screen md:h-screen overflow-x-hidden overflow-y-auto md:overflow-hidden bg-[#080808] text-white font-mono select-none">
+      {/* 頂部全域狀態 HUD 列 (手機端極簡化防擠壓 48px，桌面端 64px) */}
+      <header className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-4 pointer-events-auto bg-gradient-to-b from-black/90 via-black/50 to-transparent">
+        {/* 左側 LOGO & 模式指示 */}
+        <div className="flex items-center gap-2 sm:gap-3">
           <div
             onClick={() => handleMaintainerTap(() => setIsMaintainerOpen(true))}
-            className="w-9 h-9 rounded-lg flex items-center justify-center font-black text-black text-sm tracking-tighter cursor-pointer active:scale-95 transition-transform"
+            className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center font-black text-black text-xs sm:text-sm tracking-tighter cursor-pointer active:scale-95 transition-transform shrink-0"
             style={{ backgroundColor: selectedScenario.accentColor }}
             title="連續點擊 5 次開啟維護者暗樁抽屜"
           >
             SPK
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="font-black text-sm tracking-wider uppercase">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="font-black text-xs sm:text-sm tracking-wider uppercase whitespace-nowrap">
                 SEE HOW YOU SPEAK
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70 border border-white/15">
+              <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70 border border-white/15">
                 v2.7.0 TYPO-AGC
               </span>
             </div>
-            <p className="text-[10px] text-zinc-400 font-mono tracking-widest">
+            <p className="hidden sm:block text-[10px] text-zinc-400 font-mono tracking-widest">
               聲音動態字體 沉浸式互動裝置
             </p>
           </div>
         </div>
 
-        {/* 中間情緒場景標籤 (僅在特定畫面顯現，避免與內部情境切換器疊圖衝突) */}
+        {/* 中間情緒場景標籤 */}
         {speakState === 'LANDING' && (
           <div className="hidden md:flex items-center gap-2 bg-black/50 border border-white/10 px-3 py-1.5 rounded-full backdrop-blur-md">
             <span
@@ -331,8 +331,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         )}
 
         {/* 右側切換與麥克風狀態 */}
-        <div className="flex items-center gap-3">
-          {/* 維護者暗樁快捷按鈕 */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* 維護者暗樁快捷按鈕 (僅桌面顯示) */}
           <button
             onClick={() => setIsMaintainerOpen(true)}
             className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 hover:bg-white/10 border border-white/10 text-[11px] font-mono text-zinc-300 hover:text-white transition-all cursor-pointer"
@@ -342,21 +342,21 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             <span>全模態控制</span>
           </button>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-black/60 border border-white/10 text-[11px] font-mono">
+          <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded bg-black/60 border border-white/10 text-[10px] sm:text-[11px] font-mono shrink-0">
             <Mic
-              className={`w-3.5 h-3.5 ${
+              className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${
                 isListening ? 'text-emerald-400 animate-pulse' : 'text-zinc-400'
               }`}
             />
             <span className="text-zinc-300">
-              {isListening ? (enableVoiceVad ? '聲控待命中' : '收音中') : 'MIC 待命'}
+              {isListening ? (enableVoiceVad ? '聲控中' : '收音中') : 'MIC 待命'}
             </span>
           </div>
 
           {onSwitchMode && (
             <button
               onClick={onSwitchMode}
-              className="px-3 py-1 rounded border border-white/20 bg-white/5 hover:bg-white/15 text-[11px] text-zinc-300 hover:text-white transition-all cursor-pointer"
+              className="hidden sm:block px-3 py-1 rounded border border-white/20 bg-white/5 hover:bg-white/15 text-[11px] text-zinc-300 hover:text-white transition-all cursor-pointer"
               title="切換回 PULSE LAB 體感模式"
             >
               切換 PULSE LAB
