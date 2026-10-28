@@ -93,6 +93,10 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
     // 軌道 S：若有示範影片 (MOV / MP4)，優先透過視訊元素播放
     if (scenario.videoPromptUrl && videoRef.current) {
       const video = videoRef.current;
+      if (!video.src.includes(scenario.videoPromptUrl)) {
+        video.src = scenario.videoPromptUrl;
+        video.load();
+      }
       video.currentTime = 0;
       video
         .play()
@@ -387,7 +391,9 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
             {scenario.videoPromptUrl && (
               <div className="w-full rounded-xl overflow-hidden border border-white/20 bg-black/90 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative group aspect-video max-h-[190px] sm:max-h-none flex items-center justify-center">
                 <video
+                  key={scenario.id}
                   ref={videoRef}
+                  src={scenario.videoPromptUrl}
                   playsInline
                   preload="auto"
                   className="w-full h-full object-contain mx-auto"
@@ -466,7 +472,9 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
               <div className="flex items-center justify-between text-[9px] sm:text-[10px] text-zinc-500 pt-0.5">
                 <span className="flex items-center gap-1 truncate">
                   <Volume2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-emerald-400 shrink-0" />
-                  {scenario.audioPromptUrl
+                  {scenario.videoPromptUrl
+                    ? '🎬 原片視訊聲畫'
+                    : scenario.audioPromptUrl
                     ? 'HQ 原聲'
                     : ttsSupported
                     ? '語氣合成 (TTS)'

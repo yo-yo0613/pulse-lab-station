@@ -712,7 +712,9 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                 {scenario.videoPromptUrl && (
                   <div className="w-full rounded-xl overflow-hidden border border-white/20 bg-black aspect-video relative shadow-lg">
                     <video
+                      key={scenario.id}
                       ref={previewVideoRef}
+                      src={scenario.videoPromptUrl}
                       playsInline
                       muted
                       preload="auto"
