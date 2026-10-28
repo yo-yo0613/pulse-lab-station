@@ -1,6 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { PromptScenario } from '../types/speak';
+import type { PromptScenario, AudioMetrics } from '../types/speak';
 import { Volume2, Sparkles, ArrowRight, Play, RotateCcw } from 'lucide-react';
+import { KineticTypography } from './KineticTypography';
+
+const emptyFreq = new Uint8Array(32);
+const emptyWave = new Float32Array(32);
+
+const defaultAudioMetrics: AudioMetrics = {
+  rawVolume: 0,
+  smoothVolume: 0,
+  pitchHz: 150,
+  pitchNormalized: 0.5,
+  pitchYOffset: 0,
+  sustainedDuration: 0,
+  isSustained: false,
+  isStaccato: false,
+  isVoiceActive: false,
+  frequencyData: emptyFreq,
+  waveform: emptyWave,
+};
 
 interface PromptVideoViewProps {
   scenario: PromptScenario;
@@ -20,9 +38,14 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [playProgress, setPlayProgress] = useState(0);
   const [ttsSupported, setTtsSupported] = useState(true);
+  const [demoAudioMetrics, setDemoAudioMetrics] = useState<AudioMetrics>(defaultAudioMetrics);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const progressTimerRef = useRef<number | null>(null);
+  const demoRafRef = useRef<number | null>(null);
+  const sustainedDurationRef = useRef<number>(0);
+  const lastDemoTimeRef = useRef<number>(performance.now());
 
   // 0. 全域終止所有音訊、視訊與語音播放 (A/B 41, A/B 42, 7.35 零延遲熔斷)
   const stopAllAudio = useCallback(() => {
@@ -30,6 +53,13 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
       clearInterval(progressTimerRef.current);
       progressTimerRef.current = null;
     }
+
+    if (demoRafRef.current) {
+      cancelAnimationFrame(demoRafRef.current);
+      demoRafRef.current = null;
+    }
+    sustainedDurationRef.current = 0;
+    setDemoAudioMetrics(defaultAudioMetrics);
 
     // 終止 Web Speech API TTS 並解除強引用 (7.33)
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -187,7 +217,87 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
     }
   }, [scenario, stopAllAudio, onPlayStateChange]);
 
-  // 2. 切換情境或初次載入時觸發發音 (A/B 42 單一通道互斥)
+  // 2. 60FPS 動態字體示範插值器 (A/B 58, A/B 60, Defense 7.52)
+  // 當示範音訊/影片播放時，高頻插值標準曲線驅動 KineticTypography 形變
+  useEffect(() => {
+    if (!isPlaying) {
+      if (demoRafRef.current) {
+        cancelAnimationFrame(demoRafRef.current);
+        demoRafRef.current = null;
+      }
+      sustainedDurationRef.current = 0;
+      setDemoAudioMetrics(defaultAudioMetrics);
+      return;
+    }
+
+    lastDemoTimeRef.current = performance.now();
+
+    const updateDemoMetrics = () => {
+      const now = performance.now();
+      const dt = Math.max(0.001, (now - lastDemoTimeRef.current) / 1000);
+      lastDemoTimeRef.current = now;
+
+      let progress = 0;
+      if (videoRef.current && videoRef.current.duration > 0) {
+        progress = Math.min(1, Math.max(0, videoRef.current.currentTime / videoRef.current.duration));
+      } else if (audioRef.current && audioRef.current.duration > 0) {
+        progress = Math.min(1, Math.max(0, audioRef.current.currentTime / audioRef.current.duration));
+      } else {
+        progress = Math.min(1, Math.max(0, playProgress / 100));
+      }
+
+      const volCurve = scenario.referenceVolumeCurve || [20, 50, 80, 50, 20];
+      const pitchCurve = scenario.referencePitchCurve || [0.5, 0.6, 0.7, 0.5, 0.4];
+
+      // 線性平滑插值 (Linear Interpolation across golden curves)
+      const N = volCurve.length;
+      const fIdx = progress * (N - 1);
+      const i0 = Math.floor(fIdx);
+      const i1 = Math.min(N - 1, i0 + 1);
+      const ratio = fIdx - i0;
+
+      const volume = volCurve[i0] + (volCurve[i1] - volCurve[i0]) * ratio;
+      const pitchNorm = pitchCurve[i0] + (pitchCurve[i1] - pitchCurve[i0]) * ratio;
+
+      // 持音累積 (音量超過門檻時持續拉長，驅動 scaleX 橫向延展)
+      if (volume > 35) {
+        sustainedDurationRef.current += dt;
+      } else {
+        sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
+      }
+
+      const pitchHz = Math.round(80 + pitchNorm * 420);
+      // 高音向上浮動 (-20px ~ +15px)
+      const pitchYOffset = -((pitchNorm - 0.5) * 30);
+
+      setDemoAudioMetrics({
+        rawVolume: volume,
+        smoothVolume: volume,
+        pitchHz,
+        pitchNormalized: pitchNorm,
+        pitchYOffset,
+        sustainedDuration: sustainedDurationRef.current,
+        isSustained: sustainedDurationRef.current > 0.4,
+        isStaccato: false,
+        isVoiceActive: volume > 18,
+        frequencyData: emptyFreq,
+        waveform: emptyWave,
+      });
+
+      demoRafRef.current = requestAnimationFrame(updateDemoMetrics);
+    };
+
+    demoRafRef.current = requestAnimationFrame(updateDemoMetrics);
+
+    return () => {
+      if (demoRafRef.current) {
+        cancelAnimationFrame(demoRafRef.current);
+        demoRafRef.current = null;
+      }
+    };
+  }, [isPlaying, scenario, playProgress]);
+
+  // 3. 切換情境或初次載入時觸發發音 (A/B 42 單一通道互斥)
   useEffect(() => {
     // 延遲 150ms 確保瀏覽器音訊解鎖與語音列表就緒
     const timer = setTimeout(() => {
@@ -200,7 +310,7 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
     };
   }, [scenario.id, playDemoVoice, stopAllAudio]);
 
-  // 3. 使用者點擊「換我模仿」時，零延遲強切所有音訊 (A/B 41, 7.35)
+  // 4. 使用者點擊「換我模仿」時，零延遲強切所有音訊 (A/B 41, 7.35)
   const handleProceedToRecord = () => {
     stopAllAudio();
     onReadyToRecord();
@@ -388,13 +498,27 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                 </span>
               </div>
 
-              <div className="py-1 sm:py-2">
-                <p className="text-[10px] sm:text-[11px] text-zinc-500 tracking-wider mb-1">
-                  // 請聽原片語調，準備模仿：
-                </p>
-                <h2 className="text-2xl sm:text-4xl md:text-5xl font-black text-white tracking-wide leading-tight">
-                  「{scenario.line}」
-                </h2>
+              <div className="py-1 sm:py-2 flex flex-col items-start w-full">
+                <div className="flex items-center justify-between w-full mb-1">
+                  <p className="text-[10px] sm:text-[11px] text-zinc-500 tracking-wider">
+                    // 原片語調示範動態字體：
+                  </p>
+                  {isPlaying && (
+                    <span className="text-[9px] text-amber-400 font-mono tracking-wider animate-pulse flex items-center gap-1 font-bold">
+                      VOL: {Math.round(demoAudioMetrics.smoothVolume)}% | {demoAudioMetrics.pitchHz}Hz
+                    </span>
+                  )}
+                </div>
+                <div className="w-full min-h-[110px] sm:min-h-[140px] flex items-center justify-center bg-black/40 border border-white/10 rounded-xl px-2 py-4 overflow-visible relative">
+                  <KineticTypography
+                    text={scenario.line}
+                    audioMetrics={demoAudioMetrics}
+                    noiseFloor={15}
+                    themeColor={scenario.themeColor}
+                    accentColor={scenario.accentColor}
+                    variant="preview"
+                  />
+                </div>
               </div>
 
               {/* 挑戰提示 */}

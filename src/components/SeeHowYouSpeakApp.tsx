@@ -592,7 +592,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
             <p className="mt-8 text-xs sm:text-sm font-mono text-zinc-300 tracking-wider text-center bg-black/40 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-md">
               {isActivelyRecording
-                ? '✦ 請大聲模仿野原廣志的語調喊出！時間結束將自動結算 ✦'
+                ? `✦ 請大聲模仿「${selectedScenario.character}」的語調喊出！時間結束將自動結算 ✦`
                 : '✦ 請點擊下方「開始模仿錄音」，對著麥克風大聲喊出！ ✦'}
             </p>
           </div>

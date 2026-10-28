@@ -1,9 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
-import type { ScoreResult, PromptScenario } from '../types/speak';
+import type { ScoreResult, PromptScenario, AudioMetrics } from '../types/speak';
 import { uploadToCloudinary } from '../services/cloudinary';
 import { defaultThemeConfig } from '../config/theme.config';
 import { Download, RotateCcw, CheckCircle, Sparkles, Volume2, Square } from 'lucide-react';
+import { KineticTypography } from './KineticTypography';
+
+const emptyFreq = new Uint8Array(32);
+const emptyWave = new Float32Array(32);
+
+const defaultAudioMetrics: AudioMetrics = {
+  rawVolume: 0,
+  smoothVolume: 0,
+  pitchHz: 150,
+  pitchNormalized: 0.5,
+  pitchYOffset: 0,
+  sustainedDuration: 0,
+  isSustained: false,
+  isStaccato: false,
+  isVoiceActive: false,
+  frequencyData: emptyFreq,
+  waveform: emptyWave,
+};
 
 interface SpeakExportModalProps {
   scoreResult: ScoreResult;
@@ -40,12 +58,16 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const [isUploading, setIsUploading] = useState<boolean>(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [activeTab, setActiveTab] = useState<'poster' | 'video'>('poster');
+  const [playbackAudioMetrics, setPlaybackAudioMetrics] = useState<AudioMetrics>(defaultAudioMetrics);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const prevBlobUrlRef = useRef<string>('');
+  const playbackRafRef = useRef<number | null>(null);
+  const sustainedDurationRef = useRef<number>(0);
+  const lastPlaybackTimeRef = useRef<number>(performance.now());
 
   // 0. 安全釋放舊 Blob 記憶體 (Defense 7.31 & 7.45)
   const safeSetBlobUrl = useCallback((newUrl: string) => {
@@ -56,7 +78,82 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     setPosterBlobUrl(newUrl);
   }, []);
 
-  // 影音同步聯動播放器：野原廣志畫面 + 玩家錄音
+  // 0.1 停止成果配音字體動畫與復位
+  const stopPlaybackAnimation = useCallback(() => {
+    if (playbackRafRef.current) {
+      cancelAnimationFrame(playbackRafRef.current);
+      playbackRafRef.current = null;
+    }
+    sustainedDurationRef.current = 0;
+    setPlaybackAudioMetrics(defaultAudioMetrics);
+  }, []);
+
+  // 0.2 啟動成果配音字體動畫 (Defense 7.53: 強制綁定 audio.currentTime 防止音畫漂移)
+  const startPlaybackAnimation = useCallback(() => {
+    if (playbackRafRef.current) {
+      cancelAnimationFrame(playbackRafRef.current);
+    }
+    sustainedDurationRef.current = 0;
+    lastPlaybackTimeRef.current = performance.now();
+
+    const tick = () => {
+      const audio = audioRef.current;
+      if (!audio || audio.paused || audio.ended) {
+        stopPlaybackAnimation();
+        return;
+      }
+
+      const now = performance.now();
+      const dt = Math.max(0.001, (now - lastPlaybackTimeRef.current) / 1000);
+      lastPlaybackTimeRef.current = now;
+
+      const duration = audio.duration || 1;
+      const progress = Math.min(1, Math.max(0, audio.currentTime / duration));
+
+      const volLen = userVolumeSlice.length;
+      let volume = 0;
+      if (volLen > 0) {
+        const idx = Math.min(volLen - 1, Math.floor(progress * volLen));
+        volume = userVolumeSlice[idx] || 0;
+      }
+
+      let pitchNorm = 0.5;
+      if (userPitchSlice && userPitchSlice.length > 0) {
+        const pIdx = Math.min(userPitchSlice.length - 1, Math.floor(progress * userPitchSlice.length));
+        pitchNorm = userPitchSlice[pIdx] || 0.5;
+      }
+
+      // 持音累積 (音量超過門檻時累積秒數)
+      if (volume > 35) {
+        sustainedDurationRef.current += dt;
+      } else {
+        sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
+      }
+
+      const pitchHz = Math.round(80 + pitchNorm * 420);
+      const pitchYOffset = -((pitchNorm - 0.5) * 20);
+
+      setPlaybackAudioMetrics({
+        rawVolume: volume,
+        smoothVolume: volume,
+        pitchHz,
+        pitchNormalized: pitchNorm,
+        pitchYOffset,
+        sustainedDuration: sustainedDurationRef.current,
+        isSustained: sustainedDurationRef.current > 0.35,
+        isStaccato: false,
+        isVoiceActive: volume > 18,
+        frequencyData: emptyFreq,
+        waveform: emptyWave,
+      });
+
+      playbackRafRef.current = requestAnimationFrame(tick);
+    };
+
+    playbackRafRef.current = requestAnimationFrame(tick);
+  }, [userVolumeSlice, userPitchSlice, stopPlaybackAnimation]);
+
+  // 影音同步聯動播放器：角色畫面 + 玩家現場錄音 (Defense 7.55 Singleton Audio Ref Lock)
   const togglePlayAudio = () => {
     if (!userAudioUrl) return;
 
@@ -69,11 +166,13 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         previewVideoRef.current.pause();
         previewVideoRef.current.currentTime = 0;
       }
+      stopPlaybackAnimation();
       setIsPlayingAudio(false);
       onPlayStateChange?.(false);
       return;
     }
 
+    // 肅清舊實例，保證單一引用防疊音
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -89,6 +188,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     }
 
     audio.onended = () => {
+      stopPlaybackAnimation();
       setIsPlayingAudio(false);
       if (previewVideoRef.current) {
         previewVideoRef.current.pause();
@@ -98,6 +198,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     };
 
     audio.onerror = () => {
+      stopPlaybackAnimation();
       setIsPlayingAudio(false);
       if (previewVideoRef.current) {
         previewVideoRef.current.pause();
@@ -110,15 +211,36 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       .play()
       .then(() => {
         setIsPlayingAudio(true);
+        startPlaybackAnimation();
       })
       .catch(() => {
+        stopPlaybackAnimation();
         setIsPlayingAudio(false);
         onPlayStateChange?.(false);
       });
   };
 
+  // Defense 7.56: 跨 Tab 切換硬性音訊中斷閥門
+  const handleTabChange = (tab: 'poster' | 'video') => {
+    if (tab !== activeTab) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if (previewVideoRef.current) {
+        previewVideoRef.current.pause();
+        previewVideoRef.current.currentTime = 0;
+      }
+      stopPlaybackAnimation();
+      setIsPlayingAudio(false);
+      onPlayStateChange?.(false);
+    }
+    setActiveTab(tab);
+  };
+
   useEffect(() => {
     return () => {
+      stopPlaybackAnimation();
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
@@ -133,7 +255,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         prevBlobUrlRef.current = '';
       }
     };
-  }, [onPlayStateChange]);
+  }, [onPlayStateChange, stopPlaybackAnimation]);
 
   // 1. 合成 1080x1920 高清聲態海報 (A/B 48 逐字元聲學排版引擎)
   const renderCardPoster = useCallback(async (): Promise<string> => {
@@ -542,7 +664,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
           {/* Tab 切換：高清海報 vs 配音影片 */}
           <div className="flex items-center gap-2 bg-black/60 p-1 rounded-xl border border-white/10 backdrop-blur-md">
             <button
-              onClick={() => setActiveTab('poster')}
+              onClick={() => handleTabChange('poster')}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'poster'
                   ? 'bg-white/20 text-white shadow'
@@ -552,7 +674,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
               📄 聲態海報 (POSTER)
             </button>
             <button
-              onClick={() => setActiveTab('video')}
+              onClick={() => handleTabChange('video')}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'video'
                   ? 'bg-[#00F0FF]/20 text-[#00F0FF] border border-[#00F0FF]/40 shadow-[0_0_15px_rgba(0,240,255,0.3)]'
@@ -576,14 +698,14 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                 <img src={posterBlobUrl} alt="Voice Card" className="w-full h-full object-contain" />
               )
             ) : (
-              /* 配音影片播放區：野原廣志畫面 + 玩家模仿原音同步播放 */
+              /* 配音影片播放區：角色畫面 + 玩家模仿原音同步播放 */
               <div className="w-full h-full flex flex-col items-center justify-between p-4 bg-black/90">
                 <div className="text-center pt-2">
                   <span className="text-[11px] font-bold text-cyan-400 tracking-wider">
                     ✦ 你的專屬角色配音成片 ✦
                   </span>
                   <p className="text-[10px] text-zinc-400 mt-0.5">
-                    畫面：野原廣志 // 聲音：玩家現場演繹
+                    畫面：{scenario.character} // 聲音：玩家現場演繹
                   </p>
                 </div>
 
@@ -602,10 +724,25 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                   </div>
                 )}
 
-                <div className="w-full text-center py-2 px-3 bg-white/5 rounded-xl border border-white/10">
-                  <h3 className="text-lg font-black text-white">「{scenario.line}」</h3>
-                  <p className="text-[10px] text-zinc-400 mt-1">
-                    語音相似度：<b className="text-[#FFE600]">{scoreResult.overallScore}%</b> ({scoreResult.rankTitle})
+                {/* 動態字體配音回放區 (A/B 59, A/B 61, A/B 62, Defense 7.53 & 7.54) */}
+                <div className="w-full text-center py-2 px-2 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center justify-center min-h-[96px] overflow-hidden relative">
+                  <KineticTypography
+                    text={scenario.line}
+                    audioMetrics={playbackAudioMetrics}
+                    noiseFloor={15}
+                    themeColor={scenario.themeColor}
+                    accentColor={scenario.accentColor}
+                    variant="card"
+                  />
+                  <p className="text-[10px] text-zinc-400 mt-1 flex items-center justify-center gap-2">
+                    <span>
+                      語音相似度：<b className="text-[#FFE600]">{scoreResult.overallScore}%</b> ({scoreResult.rankTitle})
+                    </span>
+                    {isPlayingAudio && (
+                      <span className="text-cyan-400 font-mono font-bold animate-pulse text-[9px]">
+                        VOL: {Math.round(playbackAudioMetrics.smoothVolume)}%
+                      </span>
+                    )}
                   </p>
                 </div>
 
