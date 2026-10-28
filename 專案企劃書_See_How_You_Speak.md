@@ -5,9 +5,9 @@
 * **核心提案組員**：林妤安、柯佩岑、林科余（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **專案主題界定**：本規格書**100% 專注於「聲音視覺化 / 語音模仿動態字體 / 沉浸互動展演」**，與同課堂另一組由劉芯妤等同學發表之「慧眼（HuiYan）」穿戴式手套控制器提案完全區隔，請評圖與展示時明確辨識。
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / 本地聲學 DNA 編碼)
-* **架構決策原則**：57 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v3.0.0 (Acoustic Video Dubbing Card & Pure Kinetic Stage PRD)
-* **最後更新**：2026 年 10 月 23 日
+* **架構決策原則**：62 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v3.1.0 (Dynamic Demonstration & Player Dubbing Typography Master PRD)
+* **最後更新**：2026 年 10 月 28 日
 
 ---
 
@@ -369,6 +369,28 @@ flowchart TD
 * **方案 A（陷阱）**：直接把 `<video>` 畫進 Canvas，容易觸發瀏覽器 CORS Tainted 安全警告導致海報無法下載。
 * **方案 B（最佳實踐，100% 採用）**：**螢幕顯示層原生 `<video>` 播放對嘴；1080x1920 匯出海報採用本地預渲染點陣＋聲學 DNA 粒子光譜**，保證手機掃碼與現場下載 100% 成功無阻。
 
+### 🔠 組別十四：示範頁與成果卡片「雙向文字動態化（Dual Kinetic Typography）」決策組 (A/B 58 ~ A/B 62)
+
+#### 【A/B 58】 示範頁 (`PROMPT DEMO`) 台詞展示策略：死板靜態標題 vs 標準聲波即時驅動動態字幕（Demo Kinetic Preview）
+* **方案 A（陷阱）**：在示範頁右側僅放置靜態 `<h2>「{scenario.line}」</h2>`。左側影片在播放、聲波在跳動，右側文字卻像死水般紋風不動。體驗者在進入錄音前完全無法預知「聲音視覺化」到底長怎樣，失去教學示範意義。
+* **方案 B（最佳實踐，100% 採用）**：**標準聲波即時驅動動態字幕（Demo Kinetic Typography）**。示範音（影片或 TTS）播放時，直接將情境的 `referenceVolumeCurve` 與 `referencePitchCurve` 依播放進度（`playProgress`）直通轉換為動態聲學指標，使右側文字同步呈現「大吼加粗、長音拉寬 2.2x、音高樂譜浮動」的標準模範效果，達成「所見即所學」！
+
+#### 【A/B 59】 成果卡片 (`KINETIC VOICE CARD`) 台詞呈現策略：純文字死板展示 vs 玩家錄音重放時之全息動態字幕重現（Player Dubbing Kinetic Playback）
+* **方案 A（陷阱）**：在成果卡片下方僅顯示純文字 `「噢～更愛你了」`。使用者點擊播放配音成片時，只有影片與聲音在播，字幕依然是死板小字，未能兌現「專屬聲音視覺化」的承諾，沉浸感大幅減損。
+* **方案 B（最佳實踐，100% 採用）**：**玩家聲學序列動態回放引擎（Player Acoustic Playback Engine）**。點擊「播放我的配音成片」時，音訊播放時間戳與玩家剛才錄製的 `userVolumeSlice` / `userPitchSlice` 毫秒級對齊，文字隨著玩家的真實大吼、拉長音即時跳動炸裂，親眼見證自己聲音的形狀！
+
+#### 【A/B 60】 示範頁文字驅動資料來源：即時 Web Audio 監聽 vs 標準時域陣列差值插值（Interpolated Reference Waveform）
+* **方案 A（陷阱）**：在示範頁企圖開啟麥克風去收喇叭放出來的示範音來驅動字體。這會直接引發嚴重的展場雜音干擾、延遲與自激尖叫，甚至造成字體隨機抽搐。
+* **方案 B（最佳實踐，100% 採用）**：**標準時域陣列時間軸平滑插值（Timeline Interpolation）**。依據影片/音訊當前 `currentTime / duration` 百分比，對預設的 13 點黃金聲波曲線進行線性平滑插值（Lerp），以 60FPS 零雜訊穩定輸出純淨的 `smoothVolume` 與 `pitchNormalized`，展示最完美的官方字體形變範本！
+
+#### 【A/B 61】 成果頁玩家文字變形尺度：同等全螢幕巨幅縮放 vs 卡片安全框等比收斂縮放（Card-Clamped Kinetic Scale）
+* **方案 A（陷阱）**：將錄音舞台全螢幕炸裂的 2.8x 縮放公式直接搬到卡片下方小方框中。文字一大吼直接膨脹穿出卡片外框、覆蓋住上方的影片與下方的按鈕，引發破版車禍。
+* **方案 B（最佳實踐，100% 採用）**：**卡片專用邊界等比收斂映射（Card Safe-Box Typography Scaling）**。將縮放範圍約束在 `0.85x ~ 1.45x`，`font-weight` 依然保持 `300 ~ 900` 飽滿張力，長音 `scaleX` 約束在 `1.0 ~ 1.5x`，並加上局部發光光暈，保證在直式卡片框內既有強烈動態反饋、又絕對 100% 不穿幫破界！
+
+#### 【A/B 62】 影音字三位一體重播暫停之狀態復位：各自獨立不管 vs 全域時間軸同步重置（Unified Sync Reset）
+* **方案 A（陷阱）**：使用者在成片播放到一半時點擊「暫停」，音訊停了但影片還在播，或者文字定格在極限放大的爆發狀態無法還原，下次重播時音畫字時間戳完全脫節。
+* **方案 B（最佳實踐，100% 採用）**：**三位一體狀態聯動復位閥（Unified Triple-Sync Reset）**。暫停或播畢瞬間，同步執行 `video.pause(); video.currentTime = 0; audio.pause(); audio.currentTime = 0; resetTypographyMetrics();`，文字優雅以 150ms 彈簧阻尼平滑縮回預設基準形態，隨時準備下一輪完美同步播放！
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -657,6 +679,26 @@ export interface AudioMetrics {
 ### 7.51 成果頁多音軌並行播放產生「喇叭炸音或疊音」 (Export Card Multi-Track Audio Clashing)
 * **隱性災難**：若示範影片自帶原聲，而卡片又同時播放玩家剛才錄下的聲音，兩個音軌在同一個喇叭同時響起，聲音互相干擾吵雜無比，體驗者根本聽不清自己配得好不好。
 * **避坑防線**：卡片內嵌之 `<video>` 容器一律加上 `muted` 強制靜音屬性，聲音 100% 唯一來自玩家剛才錄下的現場真實音訊（`userAudioUrl`），達到完美「我替角色配音」的純粹成果展示。
+
+### 7.52 示範頁波形進度與字體動畫時間軸「非線性解耦」導致字體提前停止 (Demo Waveform Progress Decoupling)
+* **隱性災難**：在示範頁，若依賴 `video.ontimeupdate` 驅動字體變形，但因瀏覽器 `timeupdate` 事件預設每秒僅觸發 4~6 次（約 200ms 一次），會造成字體不是平滑變形，而是產生嚴重的頓挫、卡頓感，甚至在影片播放完畢前 0.3 秒進度條已達 100%，導致字體提早歸位凍結。
+* **避坑防線**：建立「示範專用 60FPS 彈簧時鐘插值器（RAF Linear Interpolator）」：以 `requestAnimationFrame` 配合影片 `currentTime / duration` 進行高頻平滑插值，保證 60FPS 極致流暢，並在 `onended` 事件時才平滑淡出。
+
+### 7.53 成果頁重放配音時玩家錄音特徵時間戳與 Audio 元素播放進度漂移 (Playback Frame-Time Drift)
+* **隱性災難**：成果卡片回放玩家聲音時，若單純用 `setInterval` 按固定間隔遞增讀取 `userVolumeSlice[i]`，若系統稍微卡頓 50ms，音訊播放器依然按硬體時鐘推進，但特徵切片 index 滯後，造成「聲音已經吼完、字體才剛開始變大」的嚴重音畫字脫節！
+* **避坑防線**：強制綁定 `audio.currentTime` 硬體時間戳：動態計算 `frameIndex = Math.floor((audio.currentTime / audio.duration) * userVolumeSlice.length)`，使字體每一幀的形變完全受控於音效卡硬體指針，哪怕瀏覽器短暫掉幀，恢復時字體立即精準瞬移回正確的聲學振幅！
+
+### 7.54 卡片文字在小尺寸海報內變形引發的「父層 Overflow 裁切與重疊遮擋」 (Card Typography Overflow Clip)
+* **隱性災難**：海報預覽卡片寬度僅 320px~360px。若直接套用大螢幕字級，當文字拉長 2.2x 且放大 2.8x 時，字體直接衝出海報邊界被 `overflow: hidden` 硬生生切掉半邊字，或者覆蓋住上方的影片畫面。
+* **避坑防線**：實裝「卡片微型環境專用約束變換矩陣（Card Scale Clamp Matrix）」：限制卡片內動態字體之 `scale` 上限為 `1.35x`，`scaleX` 上限為 `1.4x`，並將基準字級下調至 `text-lg sm:text-xl`，保持強烈彈跳張力的同時，100% 絕對受困於卡片安全框內。
+
+### 7.55 示範音與成果音重播時重複點擊按鈕引發的「多重 Audio 實例內存幽靈發聲」 (Audio Instance Ghost Leak)
+* **隱性災難**：使用者在成片播放期間興奮狂點「播放配音成片」按鈕，每次點擊若都執行 `new Audio()`，後台同時存在 3 個音訊實例同時發聲，喇叭傳出如恐怖片般的多重回音狂叫，且無法手動暫停。
+* **避坑防線**：嚴格實施「單一音訊實例引用保證（Singleton Audio Ref Lock）」：組件內唯一維護 `audioRef.current`，點擊播放前永遠先檢查並執行 `pause() & currentTime = 0`，徹底肅清所有背景幽靈音軌。
+
+### 7.56 成果頁切換「聲態海報 / 配音影片」Tab 時音畫未中斷之跨頁面靈異背景音 (Tab Switch Audio Leak)
+* **隱性災難**：體驗者在「配音影片」模式下點了播放，看了一半突然點擊切換回「聲態海報 (POSTER)」，影片畫面消失了，但玩家自己的聲音依然在背景繼續播放，甚至海報生成完還在叫。
+* **避坑防線**：在 Tab 切換處理器（`setActiveTab`）與組件卸載（`useEffect cleanup`）中，同步注入「硬性全域音訊中斷閥門（Hard Audio Abort Valve）」，只要離開影片模式立即強制 `pause()` 並復位，絕不留下任何靈異背景聲音！
 
 ---
 
