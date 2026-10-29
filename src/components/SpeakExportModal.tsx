@@ -88,7 +88,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     setPlaybackAudioMetrics(defaultAudioMetrics);
   }, []);
 
-  // 0.2 啟動成果配音字體動畫 (Defense 7.53: 強制綁定 audio.currentTime 防止音畫漂移)
+  // 0.2 啟動成果配音字體動畫 (Defense 7.53, A/B 63 & Defense 7.57 雙時鐘融合防鎖死)
   const startPlaybackAnimation = useCallback(() => {
     if (playbackRafRef.current) {
       cancelAnimationFrame(playbackRafRef.current);
@@ -107,24 +107,41 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       const dt = Math.max(0.001, (now - lastPlaybackTimeRef.current) / 1000);
       lastPlaybackTimeRef.current = now;
 
-      const duration = audio.duration || 1;
-      const progress = Math.min(1, Math.max(0, audio.currentTime / duration));
+      // 雙時鐘降級融合器 (A/B 63, Defense 7.57)
+      // Chrome/Edge WebM blob 的 audio.duration 常為 Infinity 或 NaN，強制以錄音總切片時長為備用基準
+      const sliceDuration = userVolumeSlice.length > 0 ? userVolumeSlice.length / 60 : (scenario.durationSeconds || 4);
+      const effectiveDuration = isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration
+        : sliceDuration;
+
+      const progress = Math.min(1, Math.max(0, audio.currentTime / effectiveDuration));
 
       const volLen = userVolumeSlice.length;
       let volume = 0;
-      if (volLen > 0) {
-        const idx = Math.min(volLen - 1, Math.floor(progress * volLen));
-        volume = userVolumeSlice[idx] || 0;
+      if (volLen > 1) {
+        const exactIdx = progress * (volLen - 1);
+        const i0 = Math.floor(exactIdx);
+        const i1 = Math.min(volLen - 1, i0 + 1);
+        const r = exactIdx - i0;
+        volume = (userVolumeSlice[i0] || 0) * (1 - r) + (userVolumeSlice[i1] || 0) * r;
+      } else if (volLen === 1) {
+        volume = userVolumeSlice[0] || 0;
       }
 
       let pitchNorm = 0.5;
-      if (userPitchSlice && userPitchSlice.length > 0) {
-        const pIdx = Math.min(userPitchSlice.length - 1, Math.floor(progress * userPitchSlice.length));
-        pitchNorm = userPitchSlice[pIdx] || 0.5;
+      if (userPitchSlice && userPitchSlice.length > 1) {
+        const pLen = userPitchSlice.length;
+        const exactPIdx = progress * (pLen - 1);
+        const pi0 = Math.floor(exactPIdx);
+        const pi1 = Math.min(pLen - 1, pi0 + 1);
+        const pr = exactPIdx - pi0;
+        pitchNorm = (userPitchSlice[pi0] || 0.5) * (1 - pr) + (userPitchSlice[pi1] || 0.5) * pr;
+      } else if (userPitchSlice && userPitchSlice.length === 1) {
+        pitchNorm = userPitchSlice[0] || 0.5;
       }
 
       // 持音累積 (音量超過門檻時累積秒數)
-      if (volume > 35) {
+      if (volume > 25) {
         sustainedDurationRef.current += dt;
       } else {
         sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
@@ -133,6 +150,9 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       const pitchHz = Math.round(80 + pitchNorm * 420);
       const pitchYOffset = -((pitchNorm - 0.5) * 20);
 
+      // 柔性動態呼吸閘門 (A/B 64, Defense 7.58: 放寬至 volume > 8)
+      const isVoiceActive = volume > 8;
+
       setPlaybackAudioMetrics({
         rawVolume: volume,
         smoothVolume: volume,
@@ -140,9 +160,9 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         pitchNormalized: pitchNorm,
         pitchYOffset,
         sustainedDuration: sustainedDurationRef.current,
-        isSustained: sustainedDurationRef.current > 0.35,
+        isSustained: sustainedDurationRef.current > 0.3,
         isStaccato: false,
-        isVoiceActive: volume > 18,
+        isVoiceActive,
         frequencyData: emptyFreq,
         waveform: emptyWave,
       });
@@ -151,7 +171,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     };
 
     playbackRafRef.current = requestAnimationFrame(tick);
-  }, [userVolumeSlice, userPitchSlice, stopPlaybackAnimation]);
+  }, [userVolumeSlice, userPitchSlice, scenario.durationSeconds, stopPlaybackAnimation]);
 
   // 影音同步聯動播放器：角色畫面 + 玩家現場錄音 (Defense 7.55 Singleton Audio Ref Lock)
   const togglePlayAudio = () => {

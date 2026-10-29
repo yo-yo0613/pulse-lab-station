@@ -283,7 +283,7 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
         sustainedDuration: sustainedDurationRef.current,
         isSustained: sustainedDurationRef.current > 0.4,
         isStaccato: false,
-        isVoiceActive: volume > 18,
+        isVoiceActive: volume > 10,
         frequencyData: emptyFreq,
         waveform: emptyWave,
       });
