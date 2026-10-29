@@ -60,6 +60,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const [activeTab, setActiveTab] = useState<'poster' | 'video'>('poster');
   const [playbackAudioMetrics, setPlaybackAudioMetrics] = useState<AudioMetrics>(defaultAudioMetrics);
 
+  const isPlayingRef = useRef<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
@@ -67,7 +68,6 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const prevBlobUrlRef = useRef<string>('');
   const playbackRafRef = useRef<number | null>(null);
   const sustainedDurationRef = useRef<number>(0);
-  const lastPlaybackTimeRef = useRef<number>(performance.now());
 
   // 0. 安全釋放舊 Blob 記憶體 (Defense 7.31 & 7.45)
   const safeSetBlobUrl = useCallback((newUrl: string) => {
@@ -80,6 +80,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
 
   // 0.1 停止成果配音字體動畫與復位
   const stopPlaybackAnimation = useCallback(() => {
+    isPlayingRef.current = false;
     if (playbackRafRef.current) {
       cancelAnimationFrame(playbackRafRef.current);
       playbackRafRef.current = null;
@@ -88,45 +89,98 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     setPlaybackAudioMetrics(defaultAudioMetrics);
   }, []);
 
-  // 0.2 啟動成果配音字體動畫 (Defense 7.53, A/B 63 & Defense 7.57 雙時鐘融合防鎖死)
+  // 0.2 啟動成果配音字體動畫 (Defense 7.53, A/B 63 & Defense 7.57 雙時鐘融合防鎖死 + AGC 自動增益補償)
   const startPlaybackAnimation = useCallback(() => {
     if (playbackRafRef.current) {
       cancelAnimationFrame(playbackRafRef.current);
+      playbackRafRef.current = null;
     }
     sustainedDurationRef.current = 0;
-    lastPlaybackTimeRef.current = performance.now();
+    isPlayingRef.current = true;
+    const startTime = performance.now();
+    let lastTime = startTime;
+
+    // 計算使用者錄音的最大峰值，以實施 AGC 動態範圍擴展
+    let peakVol = 1;
+    const volLen = userVolumeSlice.length;
+    for (let i = 0; i < volLen; i++) {
+      if (userVolumeSlice[i] > peakVol) peakVol = userVolumeSlice[i];
+    }
+    // AGC 動態增益補償：若麥克風偏小 (峰值 < 45%)，自動線性拉抬至 75% 飽和動態區間
+    const gainMultiplier = peakVol < 45 ? Math.min(5.0, 75 / Math.max(8, peakVol)) : 1.0;
+
+    // 計算有效總播放時間 (以錄音切片 60fps 長度為準，或情境標稱秒數)
+    const sliceDuration = volLen > 0 ? volLen / 60 : (scenario.durationSeconds || 3.5);
+    const audio = audioRef.current;
+    const effectiveDuration = (audio && isFinite(audio.duration) && audio.duration > 0.5)
+      ? audio.duration
+      : sliceDuration;
+
+    // 啟動視訊畫面同步播放
+    if (previewVideoRef.current) {
+      previewVideoRef.current.currentTime = 0;
+      previewVideoRef.current.play().catch(() => {});
+    }
 
     const tick = () => {
-      const audio = audioRef.current;
-      if (!audio || audio.paused || audio.ended) {
+      if (!isPlayingRef.current) return;
+
+      const now = performance.now();
+      const dt = Math.max(0.001, (now - lastTime) / 1000);
+      lastTime = now;
+
+      // 100% 絕對可靠的實體物理毫秒牆鐘 (零依賴 WebM 缺失的 Cues / Header)
+      const elapsed = (now - startTime) / 1000;
+      const progress = Math.min(1.0, Math.max(0, elapsed / effectiveDuration));
+
+      // 視訊畫面時間同步防漂移
+      if (previewVideoRef.current) {
+        if (previewVideoRef.current.paused && elapsed < effectiveDuration) {
+          previewVideoRef.current.play().catch(() => {});
+        }
+        if (Math.abs(previewVideoRef.current.currentTime - elapsed) > 0.35) {
+          previewVideoRef.current.currentTime = Math.min(previewVideoRef.current.duration || 99, elapsed);
+        }
+      }
+
+      // 超時或自然播畢，平穩結束
+      if (elapsed >= effectiveDuration) {
+        isPlayingRef.current = false;
         stopPlaybackAnimation();
+        setIsPlayingAudio(false);
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+        }
+        if (previewVideoRef.current) {
+          previewVideoRef.current.pause();
+          previewVideoRef.current.currentTime = 0;
+        }
+        onPlayStateChange?.(false);
         return;
       }
 
-      const now = performance.now();
-      const dt = Math.max(0.001, (now - lastPlaybackTimeRef.current) / 1000);
-      lastPlaybackTimeRef.current = now;
-
-      // 雙時鐘降級融合器 (A/B 63, Defense 7.57)
-      // Chrome/Edge WebM blob 的 audio.duration 常為 Infinity 或 NaN，強制以錄音總切片時長為備用基準
-      const sliceDuration = userVolumeSlice.length > 0 ? userVolumeSlice.length / 60 : (scenario.durationSeconds || 4);
-      const effectiveDuration = isFinite(audio.duration) && audio.duration > 0
-        ? audio.duration
-        : sliceDuration;
-
-      const progress = Math.min(1, Math.max(0, audio.currentTime / effectiveDuration));
-
-      const volLen = userVolumeSlice.length;
-      let volume = 0;
+      let rawVolume = 0;
       if (volLen > 1) {
         const exactIdx = progress * (volLen - 1);
         const i0 = Math.floor(exactIdx);
         const i1 = Math.min(volLen - 1, i0 + 1);
         const r = exactIdx - i0;
-        volume = (userVolumeSlice[i0] || 0) * (1 - r) + (userVolumeSlice[i1] || 0) * r;
+        rawVolume = (userVolumeSlice[i0] || 0) * (1 - r) + (userVolumeSlice[i1] || 0) * r;
       } else if (volLen === 1) {
-        volume = userVolumeSlice[0] || 0;
+        rawVolume = userVolumeSlice[0] || 0;
+      } else {
+        // 若切片為空，以標準曲線兜底
+        const refVol = scenario.referenceVolumeCurve || [20, 50, 80, 50, 20];
+        const exactIdx = progress * (refVol.length - 1);
+        const i0 = Math.floor(exactIdx);
+        const i1 = Math.min(refVol.length - 1, i0 + 1);
+        const r = exactIdx - i0;
+        rawVolume = (refVol[i0] || 0) * (1 - r) + (refVol[i1] || 0) * r;
       }
+
+      // AGC 增益放大幅度 (1 ~ 100)
+      const volume = Math.min(100, Math.round(rawVolume * gainMultiplier));
 
       let pitchNorm = 0.5;
       if (userPitchSlice && userPitchSlice.length > 1) {
@@ -140,8 +194,8 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         pitchNorm = userPitchSlice[0] || 0.5;
       }
 
-      // 持音累積 (音量超過門檻時累積秒數)
-      if (volume > 25) {
+      // 持音累積 (音量超過門檻時累積秒數，驅動 scaleX 橫向拉長)
+      if (volume > 15) {
         sustainedDurationRef.current += dt;
       } else {
         sustainedDurationRef.current = Math.max(0, sustainedDurationRef.current - dt * 2.5);
@@ -150,8 +204,8 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       const pitchHz = Math.round(80 + pitchNorm * 420);
       const pitchYOffset = -((pitchNorm - 0.5) * 20);
 
-      // 柔性動態呼吸閘門 (A/B 64, Defense 7.58: 放寬至 volume > 8)
-      const isVoiceActive = volume > 8;
+      // 柔性動態呼吸閘門 (A/B 64, Defense 7.58: 放寬至 volume > 5)
+      const isVoiceActive = volume > 5;
 
       setPlaybackAudioMetrics({
         rawVolume: volume,
@@ -160,7 +214,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         pitchNormalized: pitchNorm,
         pitchYOffset,
         sustainedDuration: sustainedDurationRef.current,
-        isSustained: sustainedDurationRef.current > 0.3,
+        isSustained: sustainedDurationRef.current > 0.25,
         isStaccato: false,
         isVoiceActive,
         frequencyData: emptyFreq,
@@ -171,13 +225,14 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     };
 
     playbackRafRef.current = requestAnimationFrame(tick);
-  }, [userVolumeSlice, userPitchSlice, scenario.durationSeconds, stopPlaybackAnimation]);
+  }, [userVolumeSlice, userPitchSlice, scenario, stopPlaybackAnimation, onPlayStateChange]);
 
   // 影音同步聯動播放器：角色畫面 + 玩家現場錄音 (Defense 7.55 Singleton Audio Ref Lock)
   const togglePlayAudio = () => {
     if (!userAudioUrl) return;
 
     if (isPlayingAudio) {
+      isPlayingRef.current = false;
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
@@ -201,13 +256,8 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     const audio = new Audio(userAudioUrl);
     audioRef.current = audio;
 
-    // 若處於影片模式或有預覽影片，同步播放畫面
-    if (previewVideoRef.current) {
-      previewVideoRef.current.currentTime = 0;
-      previewVideoRef.current.play().catch(() => {});
-    }
-
     audio.onended = () => {
+      isPlayingRef.current = false;
       stopPlaybackAnimation();
       setIsPlayingAudio(false);
       if (previewVideoRef.current) {
@@ -218,31 +268,22 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     };
 
     audio.onerror = () => {
-      stopPlaybackAnimation();
-      setIsPlayingAudio(false);
-      if (previewVideoRef.current) {
-        previewVideoRef.current.pause();
-      }
-      onPlayStateChange?.(false);
+      console.warn('[SpeakExportModal] 音訊播放失敗，以純動畫模式繼續播放');
     };
 
+    setIsPlayingAudio(true);
     onPlayStateChange?.(true);
-    audio
-      .play()
-      .then(() => {
-        setIsPlayingAudio(true);
-        startPlaybackAnimation();
-      })
-      .catch(() => {
-        stopPlaybackAnimation();
-        setIsPlayingAudio(false);
-        onPlayStateChange?.(false);
-      });
+    startPlaybackAnimation();
+
+    audio.play().catch((err) => {
+      console.warn('[SpeakExportModal] audio.play() 受阻 (可能是瀏覽器自動播放限制):', err);
+    });
   };
 
   // Defense 7.56: 跨 Tab 切換硬性音訊中斷閥門
   const handleTabChange = (tab: 'poster' | 'video') => {
     if (tab !== activeTab) {
+      isPlayingRef.current = false;
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
@@ -260,6 +301,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
 
   useEffect(() => {
     return () => {
+      isPlayingRef.current = false;
       stopPlaybackAnimation();
       if (audioRef.current) {
         audioRef.current.pause();

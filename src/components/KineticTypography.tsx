@@ -146,7 +146,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full mx-auto flex flex-wrap items-center justify-center select-none transform-gpu will-change-transform transition-transform duration-75 ease-out ${
+      className={`relative w-full mx-auto flex flex-wrap items-center justify-center select-none transform-gpu will-change-transform ${
         variant === 'card'
           ? 'max-w-xs gap-x-0 gap-y-1 p-1 sm:p-2'
           : variant === 'preview'
