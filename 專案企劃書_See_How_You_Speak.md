@@ -5,9 +5,9 @@
 * **核心提案組員**：林妤安、柯佩岑、林科余（【共評一】沉浸式體驗組 Top 1，總分 95.00 分）
 * **專案主題界定**：本規格書**100% 專注於「聲音視覺化 / 語音模仿動態字體 / 沉浸互動展演」**，與同課堂另一組由劉芯妤等同學發表之「慧眼（HuiYan）」穿戴式手套控制器提案完全區隔，請評圖與展示時明確辨識。
 * **技術底座**：繼承《PULSE LAB》工業級 Web 前端架構 (React 19 / TypeScript / Vite / Tailwind CSS / PWA / 本地聲學 DNA 編碼)
-* **架構決策原則**：62 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
-* **文件版本**：v3.1.0 (Dynamic Demonstration & Player Dubbing Typography Master PRD)
-* **最後更新**：2026 年 10 月 28 日
+* **架構決策原則**：67 大工程 A/B 對決 **100% 全數鎖定「方案 B」最佳實踐**
+* **文件版本**：v3.2.0 (WebM Infinity Clock & Acoustic Dubbing Typography Perfection PRD)
+* **最後更新**：2026 年 10 月 29 日
 
 ---
 
@@ -391,6 +391,28 @@ flowchart TD
 * **方案 A（陷阱）**：使用者在成片播放到一半時點擊「暫停」，音訊停了但影片還在播，或者文字定格在極限放大的爆發狀態無法還原，下次重播時音畫字時間戳完全脫節。
 * **方案 B（最佳實踐，100% 採用）**：**三位一體狀態聯動復位閥（Unified Triple-Sync Reset）**。暫停或播畢瞬間，同步執行 `video.pause(); video.currentTime = 0; audio.pause(); audio.currentTime = 0; resetTypographyMetrics();`，文字優雅以 150ms 彈簧阻尼平滑縮回預設基準形態，隨時準備下一輪完美同步播放！
 
+### 🔠 組別十五：成果卡片回放時鐘、發聲閘門與中文排版美學決策組 (A/B 63 ~ A/B 67)
+
+#### 【A/B 63】 WebM Blob 錄音回放時鐘策略：依賴 `audio.duration` 原生屬性 vs 總影格時長降級雙時鐘（Hardware Frame Clock Fallback）
+* **方案 A（陷阱）**：直接計算 `progress = audio.currentTime / audio.duration`。在 Chrome 與 Edge 瀏覽器中，MediaRecorder 生成的 WebM Blob 未包含 Duration 標頭，原生 `audio.duration` 恆為 `Infinity`（無窮大）。除以無窮大導致進度 `progress ≡ 0`，回放期間動態字體 100% 凍結死在第 0 影格，完全失去形變！
+* **方案 B（最佳實踐，100% 採用）**：**雙時鐘降級融合器（Dual Clock Fallback Fusor）**。若 `audio.duration` 為有限正數則使用，若為 `Infinity` 或 `NaN`，強制降級以 `userVolumeSlice.length / 60` 秒（或 `scenario.durationSeconds`）為實體時鐘基準，配合 `audio.currentTime` 或高精 `performance.now()` 計時，保證進度條 0% ~ 100% 毫秒級平滑推進，字體 100% 隨真實錄音起伏炸裂！
+
+#### 【A/B 64】 回放發聲判定門檻（VAD Gate）：高門檻靜音抑制 (`vol > 18`) vs 柔性動態呼吸閾值 (`vol > 8`)
+* **方案 A（陷阱）**：將回放有效發聲門檻訂在 18% 以上。使用者若錄製輕柔聲音（如派大星前半句「那是」音量約 12%~16%），整段文字直接被判定為靜音，字體紋風不動，體驗者誤以為系統故障。
+* **方案 B（最佳實踐，100% 採用）**：**柔性動態呼吸閘門（Adaptive Dynamic Soft Gate）**。回放態將有效發聲門檻放寬至 `volume > 8`，只要喉嚨有輕微發聲，字體立即獲得聲學能量開始呼吸起伏；當音量超過 35% 則進入強烈持音橫向拉寬，呈現細膩豐富的聲音層次感。
+
+#### 【A/B 65】 中文字元卡片間隙控制：Flex Gap 詞彙間隙 vs 中文原生零字隙與動態字距（Chinese Zero-Gap Natural Flow）
+* **方案 A（陷阱）**：在外層 Flex 容器套用 `gap-x-1` 或 `gap-x-2`。中文字型每個字本就是獨立方塊字，套用英文單詞的 gap 會導致中文字被硬生生扯開成「那  是  一  隻  長  頸  鹿  ～  ！」，如同生硬的機械排印，視覺破碎。
+* **方案 B（最佳實踐，100% 採用）**：**中文原生緊湊佈局＋聲音驅動動態字距（Dynamic Letter-Spacing Flow）**。容器設為 `gap-x-0`，使中文字元自然相連如正統字帖排印；僅在「大聲吼叫」或「長音拉長」時，才透過 CSS `--v-letter-spacing` 動態將字距向外撐開 2px ~ 6px，收放自如。
+
+#### 【A/B 66】 卡片預設待機字重策略：極限極細髮絲體 (Weight 100) vs 經典清晰中黑體 (Weight 500) 漸進增粗
+* **方案 A（陷阱）**：音量為 0 時字重直接歸零至 100。在深色卡片背景下，100 髮絲體細如蛛絲、邊緣模糊看不清，體驗者誤以為是介面當機或次級文字。
+* **方案 B（最佳實踐，100% 採用）**：**待機中黑 (500) ➔ 爆發特黑 (900) 動態伸展矩陣**。靜態時以俐落清晰的 500 Medium 呈現台詞，有聲音時隨 Sigmoid 飽和映射向 900 Heavy 膨脹，兼具日常可讀性與爆發時的極致張力。
+
+#### 【A/B 67】 跨情境切換時視訊快取穿透：單一 DOM 元素重用 vs 語意 Key 強制重構重載（Keyed Video Re-mount）
+* **方案 A（陷阱）**：切換情境僅變更 `<source src>`。HTML5 `<video>` 不會自動響應 `<source>` 變化，導致切換達達時依然卡在上一個老皮的畫面。
+* **方案 B（最佳實踐，100% 採用）**：**DOM 級別 Key 強制重載（Keyed Video Lifecycle）**。在 `<video key={scenario.id} src={scenario.videoPromptUrl}>` 綁定情境 ID，切換 Tab 時強制卸載舊視訊並 0.1 秒重置新視訊，畫面角色 100% 秒級對齊。
+
 ---
 
 ## 🧩 五、 核心模組架構與介面規格 (Module Architecture)
@@ -699,6 +721,35 @@ export interface AudioMetrics {
 ### 7.56 成果頁切換「聲態海報 / 配音影片」Tab 時音畫未中斷之跨頁面靈異背景音 (Tab Switch Audio Leak)
 * **隱性災難**：體驗者在「配音影片」模式下點了播放，看了一半突然點擊切換回「聲態海報 (POSTER)」，影片畫面消失了，但玩家自己的聲音依然在背景繼續播放，甚至海報生成完還在叫。
 * **避坑防線**：在 Tab 切換處理器（`setActiveTab`）與組件卸載（`useEffect cleanup`）中，同步注入「硬性全域音訊中斷閥門（Hard Audio Abort Valve）」，只要離開影片模式立即強制 `pause()` 並復位，絕不留下任何靈異背景聲音！
+
+### 7.57 Chromium WebM Blob 無 Duration 標頭引發之「回放進度除以 Infinity 歸零死鎖」 (WebM Blob Infinity Duration Deadlock)
+* **隱性災難**：在 Chrome 與 Edge 瀏覽器中，MediaRecorder 生成的 WebM 音訊檔為即時流式切片，其容器標頭未填入 Duration 欄位。瀏覽器將 `audio.duration` 賦值為 `Infinity`。當程式碼執行 `progress = audio.currentTime / audio.duration` 時，結果恆為 `0`！導致配音回放期間進度永遠凍結在 0%，文字從頭到尾無法獲得任何音量振幅，動態形變全面假死！
+* **避坑防線**：實裝「硬體總影格長度融合降級時鐘（Hardware Frame Clock Fallback）」：
+  1. 檢測 `isFinite(audio.duration) && audio.duration > 0`。
+  2. 若無效，強制以 `userVolumeSlice.length / 60` 秒（或情境標稱長度 `scenario.durationSeconds`）為實體時鐘基準。
+  3. 配合 `performance.now()` 毫秒級高精時鐘，保證進度條從 0% 到 100% 毫秒級平滑推進，字體每一影格精準起伏！
+
+### 7.58 輕柔說話與咬字前奏因高靜音門檻被整段吞沒之「字體未啟動假死」 (Sub-threshold Voice Dropping)
+* **隱性災難**：錄音時若使用者語氣較為溫和（如派大星台詞前半段「那是」音量約 12%~16%），若靜音門檻定在 `volume > 18`，系統會直接認定為背景雜音（`isVoiceActive: false`）。字體維持在未啟動之靜態，只有後半句咆哮時才突然暴動，造成前半段動畫嚴重視覺斷層。
+* **避坑防線**：建立「回放雙態自適應動態門檻（Adaptive Playback Gate）」：
+  1. 錄音時麥克風維持高標準防噪門檻（`noiseFloor` 校準防誤觸）。
+  2. 配音成片回放時，因音軌已是玩家確認之有效錄音，門檻智慧下調至 `volume > 8`，只要喉嚨微弱震動，字體立即呼吸起伏，呈現飽滿生動的完整語流！
+
+### 7.59 英文排版邏輯生搬硬套至中文導致「字元破碎如生疏注音」之視覺崩壞 (Chinese Character Kerning Shatter)
+* **隱性災難**：在 CSS Flexbox 容器中直接套用 `gap-x-1` 或 `gap-x-2`。在英文字體中此為單詞間隙（Word Spacing），但中文為方塊字元，強制加入 flex gap 會導致「那  是  一  隻  長  頸  鹿  ～  ！」每個字被拆開隔空排列，如同學齡前生疏注音課本，嚴重破壞現代字體設計美感。
+* **避坑防線**：確立「中文原生零縫隙緊湊流（Chinese Zero-Gap Natural Flow）」：
+  1. 卡片外層容器設定為 `gap-x-0`，使中文字元自然相連如正統字帖排印。
+  2. 僅在「大聲吼叫（Volume > 60%）」或「長音持音（Sustained Duration > 0.3s）」時，才透過 CSS `--v-letter-spacing` 動態將字距向外彈性延展 2px ~ 6px，收放自如。
+
+### 7.60 待機字重過薄 (Weight 100) 在暗色 OLED 螢幕之「微弱隱形與殘影」 (Hairline Glyph Sub-readability)
+* **隱性災難**：音量為 0（靜止態）時，若直接套用變形矩陣下限 `Weight 100`（極細髮絲體），在展場深黑底色（#0A0A0A）小尺寸卡片中，文字筆畫寬度小於 1px，邊緣產生嚴重反鋸齒羽化，體驗者第一眼誤以為是印刷瑕疵或字體加載失敗。
+* **避坑防線**：建構「待機中黑 (500) ➔ 爆發特黑 (900) 動態伸展矩陣」：
+  1. 待機靜態時，字重鎖定於兼具現代感與高可讀性的 `500 (Medium)`。
+  2. 發聲時，隨音量大小動態膨脹至 `700 ~ 900 (Heavy/Black)`，保證靜如處子（優雅易讀）、動如脫兔（狂暴震撼）！
+
+### 7.61 示範音與配音影片播放時雙按鈕同時點擊之「雙重音軌幽靈發聲」 (Multi-Button Trigger Race Condition)
+* **隱性災難**：成果卡片頁面中同時存在左側「▶ 播放我的配音成片」與右側「▶ 聆聽我的現場模仿原音」兩顆按鈕。若使用者興奮快速交替點擊，後台可能產生兩個獨立音訊實例交替播放，引發雙倍音量疊音。
+* **避坑防線**：嚴格實裝「單一全域音訊實體閥門（Singleton Playback Lock）」：兩顆按鈕底層調用同一控制器，點擊任一按鈕時，100% 強制互斥停止並重置另一音軌與視訊，保證全場永遠只有單一純淨聲源！
 
 ---
 
