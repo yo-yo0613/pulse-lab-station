@@ -1,13 +1,17 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import type { AudioMetrics } from '../types/speak';
 
-interface KineticTypographyProps {
+export interface KineticTypographyProps {
   text: string;
   audioMetrics: AudioMetrics;
   noiseFloor: number;
   themeColor?: string;
   accentColor?: string;
   variant?: 'hero' | 'preview' | 'card';
+  volumeSlice?: Float32Array;
+  pitchSlice?: Float32Array;
+  playbackProgress?: number;
+  isPlaying?: boolean;
 }
 
 /**
@@ -22,6 +26,17 @@ function mapVolumeToWeight(vol: number, noiseFloor: number, variant: 'hero' | 'p
   return Math.max(baseWeight, Math.min(900, dynamicWeight));
 }
 
+interface CharAcousticProfile {
+  char: string;
+  weight: number;
+  scaleX: number;
+  scaleY: number;
+  yOffset: number;
+  fontSizeRatio: number;
+  isBurst: boolean;
+  vol: number;
+}
+
 export const KineticTypography: React.FC<KineticTypographyProps> = ({
   text,
   audioMetrics,
@@ -29,18 +44,199 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   themeColor = '#FF0055',
   accentColor = '#00F0FF',
   variant = 'hero',
+  volumeSlice,
+  pitchSlice,
+  playbackProgress = 0,
+  isPlaying = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const charsRef = useRef<(HTMLSpanElement | null)[]>([]);
 
   // 將文字拆分為字元陣列 (逐字元 GPU 幾何延展)
-  const chars = Array.from(text);
+  const chars = useMemo(() => Array.from(text), [text]);
+
+  // 逐字元聲學幾何靜態印記 (A/B 48 空間映射：靜態即海報)
+  const charProfiles = useMemo<CharAcousticProfile[]>(() => {
+    const N = chars.length;
+    if (!volumeSlice || volumeSlice.length === 0) {
+      return chars.map((char) => ({
+        char,
+        weight: variant === 'card' ? 600 : 500,
+        scaleX: 1.0,
+        scaleY: 1.0,
+        yOffset: 0,
+        fontSizeRatio: 1.0,
+        isBurst: false,
+        vol: 0,
+      }));
+    }
+
+    // 計算錄音最大峰值以實施 AGC 自動動態範圍擴展
+    let peak = 1;
+    const vLen = volumeSlice.length;
+    for (let i = 0; i < vLen; i++) {
+      if (volumeSlice[i] > peak) peak = volumeSlice[i];
+    }
+    const gain = peak < 45 ? Math.min(4.5, 75 / Math.max(8, peak)) : 1.0;
+
+    return chars.map((char, i) => {
+      const isPunc = ['「', '」', '，', '。', '！', '？', '…', '～', ' '].includes(char);
+      const progress = N > 1 ? i / (N - 1) : 0;
+      const vIdx = Math.min(vLen - 1, Math.floor(progress * vLen));
+      const rawVol = volumeSlice[vIdx] || 0;
+      const vol = Math.min(100, Math.round(rawVol * gain));
+      const pVal = pitchSlice && pitchSlice.length > 0 ? (pitchSlice[vIdx] || 0.5) : 0.5;
+
+      // 1. 標點符號若為拉長音符或感嘆號，繼承前字大吼能量
+      if (isPunc) {
+        if (char === '～' || char === '！' || char === '？') {
+          return {
+            char,
+            weight: 800,
+            scaleX: Math.min(1.35, 1.1 + (vol / 100) * 0.25),
+            scaleY: 1.08,
+            yOffset: 0,
+            fontSizeRatio: 1.08,
+            isBurst: vol > 45,
+            vol,
+          };
+        }
+        return {
+          char,
+          weight: 600,
+          scaleX: 1.0,
+          scaleY: 1.0,
+          yOffset: 0,
+          fontSizeRatio: 1.0,
+          isBurst: false,
+          vol,
+        };
+      }
+
+      // 2. 音量對應字級與字重 (大聲加粗至 900 特黑，小聲 500 輕黑)
+      let fontSizeRatio = 1.0;
+      let weight = 500;
+      let isBurst = false;
+
+      if (vol > 55) {
+        fontSizeRatio = 1.10 + ((vol - 55) / 45) * 0.12; // 1.10x ~ 1.22x
+        weight = 900;
+        isBurst = true;
+      } else if (vol > 25) {
+        fontSizeRatio = 0.98 + ((vol - 25) / 30) * 0.12; // 0.98x ~ 1.10x
+        weight = 700;
+      } else {
+        fontSizeRatio = Math.max(0.90, 0.90 + (vol / 25) * 0.08); // 0.90x ~ 0.98x
+        weight = 500;
+      }
+
+      // 3. 拉長音幾何延展 (尾音或高音量處 scaleX 1.15 ~ 1.35x 橫向拉長)
+      let scaleX = 1.0;
+      if (vol > 40 && (i >= N - 5 || vol > 55)) {
+        scaleX = Math.min(1.35, 1.05 + (vol / 100) * 0.35);
+      }
+
+      // 4. 音高微幅浮動 (-10px ~ +10px)
+      const yOffset = Math.round((pVal - 0.5) * -16);
+
+      return {
+        char,
+        weight,
+        scaleX,
+        scaleY: isBurst ? 1.10 : 1.0,
+        yOffset,
+        fontSizeRatio,
+        isBurst,
+        vol,
+      };
+    });
+  }, [chars, volumeSlice, pitchSlice, variant]);
 
   // 60fps 透過 Direct CSS & GPU Transforms 驅動，0 次 React Re-render
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const count = Math.max(1, chars.length);
+
+    // ========================================================
+    // 分支 A：卡片專用雙態引擎 (Dual-State Acoustic Kinetic Subtitle Engine)
+    // ========================================================
+    if (variant === 'card' && volumeSlice && volumeSlice.length > 0) {
+      const { smoothVolume } = audioMetrics;
+
+      if (isPlaying) {
+        // --- 動態播放態：卡拉 OK 能量聚光燈逐字巡航 ---
+        const activeIdx = Math.min(count - 1, Math.max(0, Math.floor(playbackProgress * count)));
+        const containerScale = smoothVolume > 60 ? 1.05 : smoothVolume > 20 ? 1.02 : 1.0;
+        container.style.transform = `scale(${containerScale.toFixed(2)})`;
+        container.style.transformOrigin = 'center center';
+
+        charsRef.current.forEach((el, idx) => {
+          if (!el) return;
+          const p = charProfiles[idx] || {
+            weight: 600,
+            scaleX: 1.0,
+            scaleY: 1.0,
+            yOffset: 0,
+            fontSizeRatio: 1.0,
+            isBurst: false,
+          };
+
+          if (idx === activeIdx) {
+            // 聚光燈當前字元：高亮上浮 6px + 縱向彈跳 + 專屬光暈
+            el.style.fontWeight = '900';
+            el.style.color = '#FFFFFF';
+            el.style.opacity = '1';
+            const sX = (p.scaleX * 1.08).toFixed(2);
+            const sY = (p.scaleY * 1.25).toFixed(2);
+            const sTotal = (p.fontSizeRatio * 1.15).toFixed(2);
+            el.style.transform = `translateY(${p.yOffset - 6}px) scaleX(${sX}) scaleY(${sY}) scale(${sTotal})`;
+            el.style.textShadow = `0 0 16px ${themeColor}, 0 0 8px ${accentColor}, 0 0 24px #FFFFFF`;
+          } else if (idx < activeIdx) {
+            // 已經配音過的字元：維持聲態形狀與清晰明亮
+            el.style.fontWeight = `${p.weight}`;
+            el.style.color = '#FFFFFF';
+            el.style.opacity = '1';
+            el.style.transform = `translateY(${p.yOffset}px) scaleX(${p.scaleX.toFixed(2)}) scaleY(${p.scaleY.toFixed(2)}) scale(${p.fontSizeRatio.toFixed(2)})`;
+            el.style.textShadow = p.isBurst ? `0 0 8px ${accentColor}88` : 'none';
+          } else {
+            // 尚未配音的字元：維持聲態形狀，略帶 80% 待機不透明度
+            el.style.fontWeight = `${p.weight}`;
+            el.style.color = 'rgba(255, 255, 255, 0.82)';
+            el.style.opacity = '0.82';
+            el.style.transform = `translateY(${p.yOffset}px) scaleX(${p.scaleX.toFixed(2)}) scaleY(${p.scaleY.toFixed(2)}) scale(${p.fontSizeRatio.toFixed(2)})`;
+            el.style.textShadow = 'none';
+          }
+        });
+      } else {
+        // --- 靜態待機態：所見即海報，逐字預先刻畫聲態印記 ---
+        container.style.transform = 'scale(1.0)';
+        container.style.textShadow = 'none';
+
+        charsRef.current.forEach((el, idx) => {
+          if (!el) return;
+          const p = charProfiles[idx] || {
+            weight: 600,
+            scaleX: 1.0,
+            scaleY: 1.0,
+            yOffset: 0,
+            fontSizeRatio: 1.0,
+            isBurst: false,
+          };
+          el.style.fontWeight = `${p.weight}`;
+          el.style.color = '#FFFFFF';
+          el.style.opacity = '1';
+          el.style.transform = `translateY(${p.yOffset}px) scaleX(${p.scaleX.toFixed(2)}) scaleY(${p.scaleY.toFixed(2)}) scale(${p.fontSizeRatio.toFixed(2)})`;
+          el.style.textShadow = p.isBurst ? `0 0 10px ${accentColor}88` : 'none';
+        });
+      }
+      return;
+    }
+
+    // ========================================================
+    // 分支 B：經典即時動態字體 (用於 hero 錄音大舞台 與 preview 示範頁)
+    // ========================================================
     const {
       smoothVolume,
       pitchNormalized,
@@ -52,39 +248,27 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     const weight = mapVolumeToWeight(smoothVolume, noiseFloor, variant);
 
-    // 1. 繁體中文字元 GPU scaleX 極限橫向拉長 (A/B 43 方案 B / Defense 7.54 卡片約束變換矩陣)
-    // card 模式上限 1.35x, preview 模式上限 1.70x, hero 模式上限 2.35x
     const maxSustain = variant === 'card' ? 0.35 : variant === 'preview' ? 0.70 : 1.35;
     const sustainedWidth = isStaccato
       ? 0.75
       : 1.0 + Math.min(maxSustain, sustainedDuration * 0.95);
     const widthPercent = Math.round(sustainedWidth * 100);
 
-    // 2. 彈性字距間隙補償 (A/B 47 & A/B 65: 中文緊湊原生字隙，僅在聲音爆發時向外微幅延展)
     const maxSpacing = variant === 'card' ? 6 : variant === 'preview' ? 10 : 18;
     const spacingMultiplier = variant === 'card' ? 4 : variant === 'preview' ? 8 : 12;
     const letterSpacingPx = isStaccato
       ? -1
       : Math.min(maxSpacing, Math.round(sustainedDuration * spacingMultiplier));
 
-    // 3. 全螢幕音量物理炸裂縮放 (A/B 44: Hero 0.75x ~ 2.8x; Preview 0.85x ~ 1.45x; Card 0.95x ~ 1.25x)
     let containerScale = 1.0;
     if (isVoiceActive) {
-      if (variant === 'card') {
-        // 卡片微型環境專用約束變換矩陣 (Card Scale Clamp Matrix, Defense 7.54)
-        containerScale = smoothVolume > 60
-          ? 1.12 + ((smoothVolume - 60) / 40) * 0.15 // 1.12x ~ 1.27x
-          : smoothVolume > 15
-          ? 0.98 + ((smoothVolume - 15) / 45) * 0.14 // 0.98x ~ 1.12x
-          : 0.95 + (smoothVolume / 15) * 0.03;      // 0.95x ~ 0.98x
-      } else if (variant === 'preview') {
+      if (variant === 'preview') {
         containerScale = smoothVolume > 65
-          ? 1.25 + ((smoothVolume - 65) / 35) * 0.20 // 1.25x ~ 1.45x
+          ? 1.25 + ((smoothVolume - 65) / 35) * 0.20
           : smoothVolume > 20
-          ? 0.95 + ((smoothVolume - 20) / 45) * 0.30 // 0.95x ~ 1.25x
+          ? 0.95 + ((smoothVolume - 20) / 45) * 0.30
           : 0.85 + (smoothVolume / 20) * 0.10;
       } else {
-        // Hero 全螢幕舞台 (A/B 44: 0.75x ~ 2.8x)
         containerScale = smoothVolume > 65
           ? 1.7 + ((smoothVolume - 65) / 35) * 1.1
           : smoothVolume > 20
@@ -93,7 +277,6 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
       }
     }
 
-    // 4. 父容器注入通用 CSS 變數與物理縮放
     container.style.setProperty('--v-weight', `${weight}`);
     container.style.setProperty('--v-width', `${widthPercent}%`);
     container.style.setProperty('--v-y-offset', `${pitchYOffset}px`);
@@ -102,7 +285,6 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     container.style.transform = `scale(${containerScale.toFixed(2)})`;
     container.style.transformOrigin = 'center center';
 
-    // 5. 爆發態色差光暈 (Chromatic Aberration)
     const isBurst = smoothVolume > 60;
     const glowColor = isBurst ? themeColor : accentColor;
     const glowSpread = Math.min(variant === 'card' ? 14 : 32, Math.round(smoothVolume * 0.35));
@@ -115,33 +297,39 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
       container.style.textShadow = 'none';
     }
 
-    // 6. 逐字元 GPU 幾何變形 (A/B 43 / 7.37 核心：scaleX 實體拉伸中文字元)
-    const count = Math.max(1, chars.length);
-
     charsRef.current.forEach((el, idx) => {
       if (!el) return;
-
-      // 語調波浪：結合基頻 Y 軸浮動 + 音節正弦傳播
       const charPhase = (idx / count) * Math.PI * 2;
       const waveAmp = isVoiceActive ? (smoothVolume / 100) * (variant === 'card' ? 4 : 10) : 0;
       const waveDisplacement = Math.sin(charPhase + pitchNormalized * 4) * waveAmp;
       const totalY = isVoiceActive ? pitchYOffset + waveDisplacement : 0;
 
-      // 垂直縮放 (短促咬字縱向高挑 vs 大聲膨脹)
       const scaleY = isStaccato
         ? (variant === 'card' ? 1.15 : 1.35)
         : isVoiceActive
         ? 1.0 + (smoothVolume / (variant === 'card' ? 300 : 200))
         : 1.0;
 
-      // 直接向 DOM 節點硬體加速變形寫入 (A/B 43 100% 繁中字型相容)
       el.style.display = 'inline-block';
       el.style.transformOrigin = 'center center';
       el.style.transform = `translateY(${totalY.toFixed(1)}px) scaleX(${sustainedWidth.toFixed(2)}) scaleY(${scaleY.toFixed(2)})`;
       el.style.fontWeight = `${weight}`;
       el.style.letterSpacing = `${letterSpacingPx}px`;
+      el.style.color = '#FFFFFF';
+      el.style.opacity = '1';
     });
-  }, [audioMetrics, noiseFloor, themeColor, accentColor, chars.length, variant]);
+  }, [
+    audioMetrics,
+    noiseFloor,
+    themeColor,
+    accentColor,
+    chars.length,
+    variant,
+    volumeSlice,
+    charProfiles,
+    playbackProgress,
+    isPlaying,
+  ]);
 
   return (
     <div
@@ -166,7 +354,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
             ref={(el) => {
               charsRef.current[index] = el;
             }}
-            className={`kinetic-char inline-block font-black transform-gpu ${
+            className={`kinetic-char inline-block font-black transform-gpu transition-all duration-75 ${
               variant === 'card'
                 ? 'text-base sm:text-lg md:text-xl'
                 : variant === 'preview'
@@ -174,7 +362,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
                 : 'text-3xl sm:text-5xl md:text-6xl'
             } text-white`}
             style={{
-              willChange: 'transform, font-weight, letter-spacing',
+              willChange: 'transform, font-weight, color, text-shadow, opacity',
               display: isSpace ? 'inline' : 'inline-block',
               transformOrigin: 'center center',
               minWidth: isSpace ? '0.4em' : 'auto',

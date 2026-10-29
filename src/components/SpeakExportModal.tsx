@@ -57,6 +57,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [playbackProgress, setPlaybackProgress] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<'poster' | 'video'>('poster');
   const [playbackAudioMetrics, setPlaybackAudioMetrics] = useState<AudioMetrics>(defaultAudioMetrics);
 
@@ -86,6 +87,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       playbackRafRef.current = null;
     }
     sustainedDurationRef.current = 0;
+    setPlaybackProgress(0);
     setPlaybackAudioMetrics(defaultAudioMetrics);
   }, []);
 
@@ -132,6 +134,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       // 100% 絕對可靠的實體物理毫秒牆鐘 (零依賴 WebM 缺失的 Cues / Header)
       const elapsed = (now - startTime) / 1000;
       const progress = Math.min(1.0, Math.max(0, elapsed / effectiveDuration));
+      setPlaybackProgress(progress);
 
       // 視訊畫面時間同步防漂移
       if (previewVideoRef.current) {
@@ -148,6 +151,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
         isPlayingRef.current = false;
         stopPlaybackAnimation();
         setIsPlayingAudio(false);
+        setPlaybackProgress(0);
         if (audioRef.current) {
           audioRef.current.pause();
           audioRef.current.currentTime = 0;
@@ -243,6 +247,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       }
       stopPlaybackAnimation();
       setIsPlayingAudio(false);
+      setPlaybackProgress(0);
       onPlayStateChange?.(false);
       return;
     }
@@ -294,6 +299,7 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
       }
       stopPlaybackAnimation();
       setIsPlayingAudio(false);
+      setPlaybackProgress(0);
       onPlayStateChange?.(false);
     }
     setActiveTab(tab);
@@ -788,8 +794,8 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                   </div>
                 )}
 
-                {/* 動態字體配音回放區 (A/B 59, A/B 61, A/B 62, Defense 7.53 & 7.54) */}
-                <div className="w-full text-center py-2 px-2 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center justify-center min-h-[96px] overflow-hidden relative">
+                {/* 動態字體配音回放區 (A/B 59, A/B 61, A/B 62, A/B 68, Defense 7.53, 7.54 & 7.62 雙態聲態字幕引擎) */}
+                <div className="w-full text-center py-3 px-2 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center justify-center min-h-[104px] overflow-visible relative">
                   <KineticTypography
                     text={scenario.line}
                     audioMetrics={playbackAudioMetrics}
@@ -797,6 +803,10 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                     themeColor={scenario.themeColor}
                     accentColor={scenario.accentColor}
                     variant="card"
+                    volumeSlice={userVolumeSlice}
+                    pitchSlice={userPitchSlice}
+                    playbackProgress={playbackProgress}
+                    isPlaying={isPlayingAudio}
                   />
                   <p className="text-[10px] text-zinc-400 mt-1 flex items-center justify-center gap-2">
                     <span>
