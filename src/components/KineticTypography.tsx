@@ -163,14 +163,23 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     // 分支 A：卡片專用雙態引擎 (Dual-State Acoustic Kinetic Subtitle Engine)
     // ========================================================
     if (variant === 'card' && volumeSlice && volumeSlice.length > 0) {
-      const { smoothVolume } = audioMetrics;
+      const { smoothVolume, sustainedDuration, isVoiceActive, pitchYOffset } = audioMetrics;
 
       if (isPlaying) {
-        // --- 動態播放態：卡拉 OK 能量聚光燈逐字巡航 ---
+        // --- 動態播放態：100% 隨真實錄音起伏形變 (A/B 71) + 卡拉 OK 焦點巡航 ---
         const activeIdx = Math.min(count - 1, Math.max(0, Math.floor(playbackProgress * count)));
-        const containerScale = smoothVolume > 60 ? 1.05 : smoothVolume > 20 ? 1.02 : 1.0;
+        
+        // 容器隨整體音量呼吸震動
+        const containerScale = isVoiceActive && smoothVolume > 50
+          ? 1.0 + ((smoothVolume - 50) / 50) * 0.12 // 1.0x ~ 1.12x
+          : 1.0;
         container.style.transform = `scale(${containerScale.toFixed(2)})`;
         container.style.transformOrigin = 'center center';
+
+        // 即時動態字重 (隨玩家錄音音量從 500 爆發至 900)
+        const liveWeight = mapVolumeToWeight(smoothVolume, noiseFloor, 'card');
+        // 即時長音橫向拉寬量 (隨玩家真實持音持續拉寬)
+        const liveSustainBoost = Math.min(0.35, sustainedDuration * 0.85);
 
         charsRef.current.forEach((el, idx) => {
           if (!el) return;
@@ -184,27 +193,42 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
           };
 
           if (idx === activeIdx) {
-            // 聚光燈當前字元：高亮上浮 6px + 縱向彈跳 + 專屬光暈
-            el.style.fontWeight = '900';
+            // 【焦點當前字元】：深度疊加即時真實錄音能量！
+            // 聲音越大字越大越粗；長音越久字拉越寬；隨基頻上下浮動！
+            const curWeight = Math.max(p.weight, liveWeight);
+            el.style.fontWeight = `${curWeight}`;
             el.style.color = '#FFFFFF';
             el.style.opacity = '1';
-            const sX = (p.scaleX * 1.08).toFixed(2);
-            const sY = (p.scaleY * 1.25).toFixed(2);
-            const sTotal = (p.fontSizeRatio * 1.15).toFixed(2);
-            el.style.transform = `translateY(${p.yOffset - 6}px) scaleX(${sX}) scaleY(${sY}) scale(${sTotal})`;
-            el.style.textShadow = `0 0 16px ${themeColor}, 0 0 8px ${accentColor}, 0 0 24px #FFFFFF`;
+
+            // 橫向拉長：基底 scaleX ＋ 玩家此時此刻發音的即時長音加成 (上限 1.35x)
+            const sX = Math.min(1.35, p.scaleX + liveSustainBoost).toFixed(2);
+            // 縱向高度：隨音量起跳
+            const sY = (p.scaleY * (isVoiceActive ? 1.0 + (smoothVolume / 220) : 1.0)).toFixed(2);
+            // 整體縮放：大吼時顯著膨脹
+            const sTotal = (p.fontSizeRatio * (isVoiceActive ? 1.08 + (smoothVolume / 280) : 1.0)).toFixed(2);
+            // 垂直浮動：基底 offset ＋ 音高即時位移
+            const curY = p.yOffset - (isVoiceActive ? 6 : 0) + pitchYOffset * 0.2;
+
+            el.style.transform = `translateY(${curY.toFixed(1)}px) scaleX(${sX}) scaleY(${sY}) scale(${sTotal})`;
+
+            // 爆發光暈
+            if (smoothVolume > 50) {
+              el.style.textShadow = `-2px 0 10px rgba(255,0,85,0.7), 2px 0 10px rgba(0,240,255,0.7), 0 0 16px #FFFFFF`;
+            } else {
+              el.style.textShadow = `0 0 14px ${themeColor}, 0 0 8px ${accentColor}`;
+            }
           } else if (idx < activeIdx) {
-            // 已經配音過的字元：維持聲態形狀與清晰明亮
+            // 已經配音過的字元：保留專屬聲態形狀與明亮清晰
             el.style.fontWeight = `${p.weight}`;
             el.style.color = '#FFFFFF';
-            el.style.opacity = '1';
+            el.style.opacity = '0.95';
             el.style.transform = `translateY(${p.yOffset}px) scaleX(${p.scaleX.toFixed(2)}) scaleY(${p.scaleY.toFixed(2)}) scale(${p.fontSizeRatio.toFixed(2)})`;
-            el.style.textShadow = p.isBurst ? `0 0 8px ${accentColor}88` : 'none';
+            el.style.textShadow = p.isBurst ? `0 0 8px ${accentColor}66` : 'none';
           } else {
-            // 尚未配音的字元：維持聲態形狀，略帶 80% 待機不透明度
+            // 尚未配音的字元：維持基底聲態形狀，略帶待機灰階
             el.style.fontWeight = `${p.weight}`;
-            el.style.color = 'rgba(255, 255, 255, 0.82)';
-            el.style.opacity = '0.82';
+            el.style.color = 'rgba(255, 255, 255, 0.75)';
+            el.style.opacity = '0.75';
             el.style.transform = `translateY(${p.yOffset}px) scaleX(${p.scaleX.toFixed(2)}) scaleY(${p.scaleY.toFixed(2)}) scale(${p.fontSizeRatio.toFixed(2)})`;
             el.style.textShadow = 'none';
           }

@@ -150,7 +150,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setSpeakState('RECORDING');
   }, [unlockAudio, setMuteInput]);
 
-  // 錄音流程：點擊開始 ➔ 麥克風全開 ➔ 高光進度軸以時長 (3.5s) 推進 ➔ 時間到自動停止結算 (A/B 54)
+  // 錄音流程：點擊開始 ➔ 麥克風全開 ➔ 使用者自主主導時長 (A/B 69, 7.64)，想講多久講多久，講完點擊「完成模仿」結算
   const handleToggleRecording = useCallback(async () => {
     const now = performance.now();
     // 300ms 點擊互鎖防抖動
@@ -170,18 +170,19 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
 
-      const targetDuration = selectedScenario.durationSeconds || 3.5;
+      // 安全防護天花板上限 12 秒 (防止使用者離開忘記按結算)
+      const maxCeilingDuration = 12.0;
 
       const checkDuration = () => {
         const elapsed = getElapsedHardwareTime();
         setElapsedRecordTime(parseFloat(elapsed.toFixed(1)));
 
-        // 計算進度百分比 (等比推進至 100%)
-        const progress = Math.min(100, (elapsed / targetDuration) * 100);
+        // 進度條以 12 秒為最大時間軸推進
+        const progress = Math.min(100, (elapsed / maxCeilingDuration) * 100);
         setRecordProgress(progress);
 
-        // 時間到達時自動停止錄音並進入結算！(林妤安：進度軸結束=錄音結束)
-        if (elapsed >= targetDuration) {
+        // 僅當到達極限 12 秒安全天花板時才自動停止
+        if (elapsed >= maxCeilingDuration) {
           finishRecording();
         } else {
           animFrameIdRef.current = requestAnimationFrame(checkDuration);
@@ -190,10 +191,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       animFrameIdRef.current = requestAnimationFrame(checkDuration);
     } else {
-      // 使用者若想提早結束
+      // 使用者念完主動點擊【完成模仿，立即結算】(A/B 69)
       finishRecording();
     }
-  }, [isActivelyRecording, unlockAudio, setMuteInput, startRecording, selectedScenario.durationSeconds, getElapsedHardwareTime, finishRecording]);
+  }, [isActivelyRecording, unlockAudio, setMuteInput, startRecording, getElapsedHardwareTime, finishRecording]);
 
   // 清除計時器
   useEffect(() => {
@@ -592,7 +593,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
             <p className="mt-8 text-xs sm:text-sm font-mono text-zinc-300 tracking-wider text-center bg-black/40 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-md">
               {isActivelyRecording
-                ? `✦ 請大聲模仿「${selectedScenario.character}」的語調喊出！時間結束將自動結算 ✦`
+                ? `✦ 請大聲模仿「${selectedScenario.character}」！念完隨時點擊下方按鈕結算 ✦`
                 : '✦ 請點擊下方「開始模仿錄音」，對著麥克風大聲喊出！ ✦'}
             </p>
           </div>
@@ -618,7 +619,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 className="px-8 py-4 rounded-full bg-rose-600 hover:bg-rose-500 border border-rose-400 text-white font-mono text-xs sm:text-sm font-black tracking-widest uppercase flex items-center gap-3 transition-all cursor-pointer shadow-[0_0_35px_rgba(244,63,94,0.6)] active:scale-95 animate-pulse"
               >
                 <Square className="w-4 h-4 fill-current" />
-                <span>正在錄音中... (進度條結束將自動結算)</span>
+                <span>⏹ 完成模仿，立即結算 (FINISH RECORDING)</span>
               </button>
             )}
           </div>
