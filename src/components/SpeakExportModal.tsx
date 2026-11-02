@@ -788,8 +788,8 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
                       preload="auto"
                       className="w-full h-full object-contain mx-auto"
                     >
-                      <source src={scenario.videoPromptUrl} type="video/mp4" />
-                      <source src={scenario.videoPromptUrl.replace('.mp4', '.mov')} type="video/quicktime" />
+                      <source src={scenario.videoPromptUrl} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/quicktime' : 'video/mp4'} />
+                      <source src={scenario.videoPromptUrl.endsWith('.mov') ? scenario.videoPromptUrl.replace('.mov', '.mp4') : scenario.videoPromptUrl.replace('.mp4', '.mov')} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/mp4' : 'video/quicktime'} />
                     </video>
                   </div>
                 )}

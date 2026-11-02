@@ -409,8 +409,8 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                     onPlayStateChange?.(false);
                   }}
                 >
-                  <source src={scenario.videoPromptUrl} type="video/mp4" />
-                  <source src={scenario.videoPromptUrl.replace('.mp4', '.mov')} type="video/quicktime" />
+                  <source src={scenario.videoPromptUrl} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/quicktime' : 'video/mp4'} />
+                  <source src={scenario.videoPromptUrl.endsWith('.mov') ? scenario.videoPromptUrl.replace('.mov', '.mp4') : scenario.videoPromptUrl.replace('.mp4', '.mov')} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/mp4' : 'video/quicktime'} />
                   您的瀏覽器不支援內嵌示範影片播放。
                 </video>
                 {!isPlaying && (
