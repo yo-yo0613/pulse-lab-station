@@ -12,6 +12,7 @@ export interface KineticTypographyProps {
   pitchSlice?: Float32Array;
   playbackProgress?: number;
   isPlaying?: boolean;
+  activeCharIndex?: number; // 方案 B 逐字卡拉OK彈跳焦點 (-1: 待機, 0..N-1: 爆發當前字, >=N: 全句完成)
 }
 
 /**
@@ -48,6 +49,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   pitchSlice,
   playbackProgress = 0,
   isPlaying = false,
+  activeCharIndex,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const charsRef = useRef<(HTMLSpanElement | null)[]>([]);
@@ -323,6 +325,47 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     charsRef.current.forEach((el, idx) => {
       if (!el) return;
+
+      // 方案 B：示範頁卡拉OK逐字爆發彈跳 (Word-level kinetic pop)
+      if (variant === 'preview' && activeCharIndex !== undefined) {
+        el.style.display = 'inline-block';
+        el.style.transformOrigin = 'center center';
+        el.style.letterSpacing = `${letterSpacingPx}px`;
+
+        if (activeCharIndex === -1) {
+          // 尚未開口：待機微暗
+          el.style.fontWeight = '500';
+          el.style.color = 'rgba(255, 255, 255, 0.65)';
+          el.style.opacity = '0.65';
+          el.style.transform = 'translateY(0px) scale(1.0)';
+          el.style.textShadow = 'none';
+        } else if (idx === activeCharIndex) {
+          // 當前發音字：劇烈爆發彈跳、加粗、爆光！
+          const burstScale = 1.25 + Math.min(0.2, (smoothVolume / 100) * 0.15);
+          const burstY = isVoiceActive ? -8 + pitchYOffset * 0.2 : -4;
+          el.style.fontWeight = '900';
+          el.style.color = '#FFFFFF';
+          el.style.opacity = '1.0';
+          el.style.transform = `translateY(${burstY.toFixed(1)}px) scale(${burstScale.toFixed(2)}) scaleX(${sustainedWidth.toFixed(2)})`;
+          el.style.textShadow = `-3px 0 12px rgba(255,0,85,0.85), 3px 0 12px rgba(0,240,255,0.85), 0 0 20px #FFFFFF`;
+        } else if (idx < activeCharIndex) {
+          // 已唸過字：保持明亮高光
+          el.style.fontWeight = '700';
+          el.style.color = '#FFFFFF';
+          el.style.opacity = '0.95';
+          el.style.transform = 'translateY(0px) scale(1.04)';
+          el.style.textShadow = `0 0 10px ${accentColor}88`;
+        } else {
+          // 尚未唸到字：安靜待機
+          el.style.fontWeight = '500';
+          el.style.color = 'rgba(255, 255, 255, 0.55)';
+          el.style.opacity = '0.55';
+          el.style.transform = 'translateY(0px) scale(1.0)';
+          el.style.textShadow = 'none';
+        }
+        return;
+      }
+
       const charPhase = (idx / count) * Math.PI * 2;
       const waveAmp = isVoiceActive ? (smoothVolume / 100) * (variant === 'card' ? 4 : 10) : 0;
       const waveDisplacement = Math.sin(charPhase + pitchNormalized * 4) * waveAmp;
@@ -353,6 +396,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     charProfiles,
     playbackProgress,
     isPlaying,
+    activeCharIndex,
   ]);
 
   return (

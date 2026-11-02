@@ -42,6 +42,11 @@ export interface PromptScenario {
     pitch: number;                // 0.5 ~ 1.5 語調高低
     rate: number;                 // 0.5 ~ 1.5 語速快慢
   };
+  charTimings?: {                 // 毫秒級字級爆發時間戳 (方案 B 卡拉OK式字體彈跳)
+    char: string;
+    startSec: number;
+    endSec: number;
+  }[];
 }
 
 export interface ScoreResult {

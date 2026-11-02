@@ -39,6 +39,7 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   const [playProgress, setPlayProgress] = useState(0);
   const [ttsSupported, setTtsSupported] = useState(true);
   const [demoAudioMetrics, setDemoAudioMetrics] = useState<AudioMetrics>(defaultAudioMetrics);
+  const [activeCharIndex, setActiveCharIndex] = useState<number>(-1);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -60,6 +61,7 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
     }
     sustainedDurationRef.current = 0;
     setDemoAudioMetrics(defaultAudioMetrics);
+    setActiveCharIndex(-1);
 
     // 終止 Web Speech API TTS 並解除強引用 (7.33)
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -242,13 +244,46 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
       lastDemoTimeRef.current = now;
 
       let progress = 0;
+      let currentTime = 0;
+      let duration = scenario.durationSeconds || 5.0;
       if (videoRef.current && videoRef.current.duration > 0) {
-        progress = Math.min(1, Math.max(0, videoRef.current.currentTime / videoRef.current.duration));
+        currentTime = videoRef.current.currentTime;
+        duration = videoRef.current.duration;
+        progress = Math.min(1, Math.max(0, currentTime / duration));
       } else if (audioRef.current && audioRef.current.duration > 0) {
-        progress = Math.min(1, Math.max(0, audioRef.current.currentTime / audioRef.current.duration));
+        currentTime = audioRef.current.currentTime;
+        duration = audioRef.current.duration;
+        progress = Math.min(1, Math.max(0, currentTime / duration));
       } else {
         progress = Math.min(1, Math.max(0, playProgress / 100));
+        currentTime = progress * duration;
       }
+
+      // 方案 B：毫秒級字級卡拉OK彈跳焦點 (Word-level active char index)
+      let calculatedCharIndex = -1;
+      if (scenario.charTimings && scenario.charTimings.length > 0) {
+        const timings = scenario.charTimings;
+        if (currentTime < timings[0].startSec) {
+          calculatedCharIndex = -1; // 尚未開口，全句待機微暗
+        } else if (currentTime > timings[timings.length - 1].endSec) {
+          calculatedCharIndex = timings.length; // 全句已唸完，全亮完成海報態
+        } else {
+          for (let i = 0; i < timings.length; i++) {
+            if (currentTime >= timings[i].startSec && currentTime <= timings[i].endSec) {
+              calculatedCharIndex = i;
+              break;
+            }
+            if (i < timings.length - 1 && currentTime > timings[i].endSec && currentTime < timings[i + 1].startSec) {
+              calculatedCharIndex = i;
+              break;
+            }
+          }
+        }
+      } else {
+        const charCount = Array.from(scenario.line).length;
+        calculatedCharIndex = Math.min(charCount - 1, Math.floor(progress * charCount));
+      }
+      setActiveCharIndex(calculatedCharIndex);
 
       const volCurve = scenario.referenceVolumeCurve || [20, 50, 80, 50, 20];
       const pitchCurve = scenario.referencePitchCurve || [0.5, 0.6, 0.7, 0.5, 0.4];
@@ -409,8 +444,19 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                     onPlayStateChange?.(false);
                   }}
                 >
-                  <source src={scenario.videoPromptUrl} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/quicktime' : 'video/mp4'} />
-                  <source src={scenario.videoPromptUrl.endsWith('.mov') ? scenario.videoPromptUrl.replace('.mov', '.mp4') : scenario.videoPromptUrl.replace('.mp4', '.mov')} type={scenario.videoPromptUrl.endsWith('.mov') ? 'video/mp4' : 'video/quicktime'} />
+                  <source
+                    src={scenario.videoPromptUrl}
+                    type={
+                      scenario.videoPromptUrl.endsWith('.webm')
+                        ? 'video/webm'
+                        : scenario.videoPromptUrl.endsWith('.mov')
+                        ? 'video/quicktime'
+                        : 'video/mp4'
+                    }
+                  />
+                  {scenario.videoPromptUrl.endsWith('.webm') && (
+                    <source src={scenario.videoPromptUrl.replace('.webm', '.mp4')} type="video/mp4" />
+                  )}
                   您的瀏覽器不支援內嵌示範影片播放。
                 </video>
                 {!isPlaying && (
@@ -525,6 +571,8 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
                     themeColor={scenario.themeColor}
                     accentColor={scenario.accentColor}
                     variant="preview"
+                    activeCharIndex={activeCharIndex}
+                    isPlaying={isPlaying}
                   />
                 </div>
               </div>
