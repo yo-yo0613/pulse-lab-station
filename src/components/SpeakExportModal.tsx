@@ -43,6 +43,47 @@ interface GlyphInfo {
   isBurst: boolean;
 }
 
+export function buildSpeakShareUrl({
+  scoreResult,
+  scenario,
+  uploadedImageUrl,
+  userVolumeSlice,
+  userPitchSlice,
+}: {
+  scoreResult: ScoreResult;
+  scenario: PromptScenario;
+  uploadedImageUrl?: string | null;
+  userVolumeSlice?: Float32Array;
+  userPitchSlice?: Float32Array;
+}): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const params = new URLSearchParams({
+    score: String(scoreResult.overallScore),
+    rank: scoreResult.rank,
+    title: scoreResult.rankTitle,
+    code: scoreResult.verificationCode,
+    line: scenario.line,
+    sc: scenario.id,
+    ts: scoreResult.timestamp,
+  });
+  if (uploadedImageUrl) {
+    params.set('img', uploadedImageUrl);
+  } else if (userVolumeSlice && userVolumeSlice.length > 0) {
+    const samplesW: number[] = [];
+    const samplesP: number[] = [];
+    const step = Math.max(1, Math.floor(userVolumeSlice.length / 16));
+    for (let i = 0; i < 16; i++) {
+      const idx = Math.min(userVolumeSlice.length - 1, i * step);
+      samplesW.push(Math.round(userVolumeSlice[idx] || 0));
+      const pNorm = userPitchSlice ? userPitchSlice[idx] || 0.2 : 0.2;
+      samplesP.push(Math.round(pNorm * 100));
+    }
+    params.set('w', samplesW.join(','));
+    params.set('p', samplesP.join(','));
+  }
+  return `${origin}/share-speak?${params.toString()}`;
+}
+
 export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
   scoreResult,
   scenario,
@@ -631,35 +672,15 @@ export const SpeakExportModal: React.FC<SpeakExportModalProps> = ({
     });
   }, [scenario, scoreResult, userVolumeSlice, userPitchSlice]);
 
-  // 2. 生成分享 QR Code 網址 (A/B 52 帶上聲學時域特徵切片 w, p)
+  // 2. 生成分享 QR Code 網址 (共用 buildSpeakShareUrl 確保離線聲學 DNA 參數一致)
   const getQrPayload = useCallback(() => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const params = new URLSearchParams({
-      score: String(scoreResult.overallScore),
-      rank: scoreResult.rank,
-      title: scoreResult.rankTitle,
-      code: scoreResult.verificationCode,
-      line: scenario.line,
-      sc: scenario.id,
-      ts: scoreResult.timestamp,
+    return buildSpeakShareUrl({
+      scoreResult,
+      scenario,
+      uploadedImageUrl,
+      userVolumeSlice,
+      userPitchSlice,
     });
-    if (uploadedImageUrl) {
-      params.set('img', uploadedImageUrl);
-    } else if (userVolumeSlice && userVolumeSlice.length > 0) {
-      // 離線降級：取 16 個代表性音量 (w) 與音高 (p) 特徵點壓入 URL (A/B 24 / A/B 52)
-      const samplesW: number[] = [];
-      const samplesP: number[] = [];
-      const step = Math.max(1, Math.floor(userVolumeSlice.length / 16));
-      for (let i = 0; i < 16; i++) {
-        const idx = Math.min(userVolumeSlice.length - 1, i * step);
-        samplesW.push(Math.round(userVolumeSlice[idx] || 0));
-        const pNorm = userPitchSlice ? userPitchSlice[idx] || 0.2 : 0.2;
-        samplesP.push(Math.round(pNorm * 100));
-      }
-      params.set('w', samplesW.join(','));
-      params.set('p', samplesP.join(','));
-    }
-    return `${origin}/share-speak?${params.toString()}`;
   }, [scoreResult, scenario, uploadedImageUrl, userVolumeSlice, userPitchSlice]);
 
   const qrCodePayload = getQrPayload();

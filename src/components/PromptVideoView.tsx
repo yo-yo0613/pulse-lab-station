@@ -28,6 +28,54 @@ interface PromptVideoViewProps {
   onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
+export function resolveScenarioCharIndex(
+  scenario: PromptScenario,
+  currentTime: number,
+  progress: number
+): number {
+  if (scenario.phraseCycles && scenario.phraseCycles.length > 0) {
+    // 支援長影片中多段落重複出現同一台詞 (例如達達 40.8s 內 6 次「火車上有鱷魚！」)
+    for (const cycle of scenario.phraseCycles) {
+      if (currentTime >= cycle.startSec && currentTime <= cycle.endSec) {
+        const timings = cycle.charTimings;
+        for (let i = 0; i < timings.length; i++) {
+          if (currentTime >= timings[i].startSec && currentTime <= timings[i].endSec) {
+            return i;
+          }
+          if (i < timings.length - 1 && currentTime > timings[i].endSec && currentTime < timings[i + 1].startSec) {
+            return i;
+          }
+        }
+        return timings.length - 1;
+      }
+    }
+    // 若處於各片段之間的過場或片尾，根據最近結束的循環判定
+    const first = scenario.phraseCycles[0];
+    if (currentTime < first.startSec) return -1;
+    const last = scenario.phraseCycles[scenario.phraseCycles.length - 1];
+    if (currentTime > last.endSec) return Array.from(scenario.line).length;
+    return -1;
+  }
+
+  if (scenario.charTimings && scenario.charTimings.length > 0) {
+    const timings = scenario.charTimings;
+    if (currentTime < timings[0].startSec) return -1;
+    if (currentTime > timings[timings.length - 1].endSec) return timings.length;
+    for (let i = 0; i < timings.length; i++) {
+      if (currentTime >= timings[i].startSec && currentTime <= timings[i].endSec) {
+        return i;
+      }
+      if (i < timings.length - 1 && currentTime > timings[i].endSec && currentTime < timings[i + 1].startSec) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  const charCount = Array.from(scenario.line).length;
+  return Math.min(charCount - 1, Math.floor(progress * charCount));
+}
+
 export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
   scenario,
   onReadyToRecord,
@@ -259,30 +307,8 @@ export const PromptVideoView: React.FC<PromptVideoViewProps> = ({
         currentTime = progress * duration;
       }
 
-      // 方案 B：毫秒級字級卡拉OK彈跳焦點 (Word-level active char index)
-      let calculatedCharIndex = -1;
-      if (scenario.charTimings && scenario.charTimings.length > 0) {
-        const timings = scenario.charTimings;
-        if (currentTime < timings[0].startSec) {
-          calculatedCharIndex = -1; // 尚未開口，全句待機微暗
-        } else if (currentTime > timings[timings.length - 1].endSec) {
-          calculatedCharIndex = timings.length; // 全句已唸完，全亮完成海報態
-        } else {
-          for (let i = 0; i < timings.length; i++) {
-            if (currentTime >= timings[i].startSec && currentTime <= timings[i].endSec) {
-              calculatedCharIndex = i;
-              break;
-            }
-            if (i < timings.length - 1 && currentTime > timings[i].endSec && currentTime < timings[i + 1].startSec) {
-              calculatedCharIndex = i;
-              break;
-            }
-          }
-        }
-      } else {
-        const charCount = Array.from(scenario.line).length;
-        calculatedCharIndex = Math.min(charCount - 1, Math.floor(progress * charCount));
-      }
+      // 方案 B：毫秒級字級卡拉OK彈跳焦點 (支援多段 phraseCycles 重複觸發)
+      const calculatedCharIndex = resolveScenarioCharIndex(scenario, currentTime, progress);
       setActiveCharIndex(calculatedCharIndex);
 
       const volCurve = scenario.referenceVolumeCurve || [20, 50, 80, 50, 20];

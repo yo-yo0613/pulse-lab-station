@@ -19,9 +19,30 @@
   html, body {
     width: 100%;
     min-height: 100%;
-    background-color: #0a0a0a;
-    color: #ffffff;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    background-color: #ffffff;
+    color: #000000;
+    font-family: 'Noto Sans TC', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+
+  .font-yuji {
+    font-family: 'Yuji Syuku', 'Noto Serif TC', Georgia, serif;
+  }
+
+  .font-iosevka {
+    font-family: 'Iosevka Charon', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .font-mats-tc {
+    font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .water-reflection-mask {
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.18) 55%, rgba(0, 0, 0, 0) 95%);
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.18) 55%, rgba(0, 0, 0, 0) 95%);
+  }
+
+  .glow-pill-white {
+    background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.75) 55%, rgba(255, 255, 255, 0) 78%);
   }
 
   body.kiosk-locked {

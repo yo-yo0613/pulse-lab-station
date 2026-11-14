@@ -22,6 +22,28 @@ export interface AudioMetrics {
   isVoiceActive: boolean;    // 是否突破環境底噪門檻
   frequencyData: Uint8Array; // 頻譜資料 (低/中/高頻)
   waveform: Float32Array;    // 時域波形資料
+  // --- MATS v1.0 Extended Acoustic Features ---
+  f0MacroHz?: number;        // 300ms 滑動均值巨觀語調基頻 (抗四聲干擾)
+  deltaRms?: number;         // 個人基準正規化相對音量 (-1 ~ +3)
+  deltaF0?: number;          // 個人基準正規化相對音高 (-1 ~ +1)
+  jitter?: number;           // 頻率微擾 (音高震顫度 %, 0 ~ 10)
+  hnrDb?: number;            // 諧波雜訊比 (氣聲/沙啞指標 dB, 4 ~ 26)
+  speechRate?: number;       // 語速估計 (音節/秒)
+  pauseDurationMs?: number;  // 前段靜音停頓時長 (ms)
+  valence?: number;          // 情緒效價軸 (-1.0 負向 ~ +1.0 正向)
+  arousal?: number;          // 情緒喚起軸 (-1.0 平靜 ~ +1.0 高亢)
+}
+
+export interface PhraseCharTiming {
+  char: string;
+  startSec: number;
+  endSec: number;
+}
+
+export interface PhraseCycle {
+  startSec: number;
+  endSec: number;
+  charTimings: PhraseCharTiming[];
 }
 
 export interface PromptScenario {
@@ -29,6 +51,9 @@ export interface PromptScenario {
   title: string;
   character: string;
   emotion: string;
+  tagId: string;             // TAG category ID (e.g. 'tag-panic')
+  tagLabel: string;          // Display tag name for Slide 2 header & pill
+  tagFocus?: string;         // MATS acoustic dimension highlight for TAG card
   line: string;
   hint: string;
   themeColor: string;
@@ -36,17 +61,26 @@ export interface PromptScenario {
   durationSeconds: number;
   referenceVolumeCurve: number[]; // 歸一化標準音量曲線 (0~100)
   referencePitchCurve: number[];  // 歸一化標準音高曲線 (0~1)
-  videoPromptUrl?: string;        // 實體 MP4/MOV 示範影片路徑 (A/B 53 雙軌容器)
-  audioPromptUrl?: string;        // 實體 MP3/WAV 示範錄音路徑 (A/B 38 雙軌架構)
-  ttsConfig?: {                   // TTS 語氣參數 (A/B 39 Web Speech 語氣合成)
+  videoPromptUrl?: string;        // 實體 MP4/MOV/WEBM 示範影片路徑
+  audioPromptUrl?: string;        // 實體 MP3/WAV 示範錄音路徑
+  ttsConfig?: {                   // TTS 語氣參數
     pitch: number;                // 0.5 ~ 1.5 語調高低
     rate: number;                 // 0.5 ~ 1.5 語速快慢
   };
-  charTimings?: {                 // 毫秒級字級爆發時間戳 (方案 B 卡拉OK式字體彈跳)
-    char: string;
-    startSec: number;
-    endSec: number;
-  }[];
+  charTimings?: PhraseCharTiming[];
+  phraseCycles?: PhraseCycle[];   // 多段重複出現台詞時間軸 (例如達達 40.8s 影片中的 6 次吼叫)
+}
+
+export interface MATSMetricsSummary {
+  avgDeltaRms: number;
+  avgF0Hz: number;
+  avgJitter: number;
+  avgHnrDb: number;
+  avgPauseMs: number;
+  valence: number;
+  arousal: number;
+  quadrantLabel: string;
+  isCalibrated: boolean;
 }
 
 export interface ScoreResult {
@@ -60,4 +94,5 @@ export interface ScoreResult {
   timestamp: string;
   scenarioId: string;
   cloudImageUrl?: string;
+  matsMetrics?: MATSMetricsSummary;
 }
