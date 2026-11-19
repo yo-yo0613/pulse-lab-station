@@ -113,6 +113,73 @@ function classifyQuadrant(valence: number, arousal: number): string {
   return '低沉內斂・遲疑／呢喃 (Low Arousal −)';
 }
 
+/**
+ * 純前端 16-bit PCM WAV 封裝器 + 自動峰值正規化 (AGC)
+ * 完全繞過 MediaRecorder 的 WebM 空檔/檔頭損毀問題，並將偏小的麥克風人聲自動拉抬至清晰可聽音量
+ */
+function encodeWavBlob(chunks: Float32Array[], sampleRate: number): Blob | null {
+  let totalLength = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    totalLength += chunks[i].length;
+  }
+  // 過短（少於 0.1 秒）視為無有效錄音，避免產出 0-byte 壞檔
+  if (totalLength < Math.floor(sampleRate * 0.1)) {
+    return null;
+  }
+
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  let peak = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    merged.set(chunk, offset);
+    for (let j = 0; j < chunk.length; j++) {
+      const absVal = Math.abs(chunk[j]);
+      if (absVal > peak) peak = absVal;
+    }
+    offset += chunk.length;
+  }
+
+  // 自動增益正規化：目標峰值 0.88 (-1.1 dBFS)，最高增益上限 8.0x 防止純底噪爆音
+  const gain = peak > 0.002 ? Math.min(8.0, 0.88 / peak) : 1.0;
+
+  const dataByteLength = totalLength * 2; // 16-bit mono = 2 bytes per sample
+  const buffer = new ArrayBuffer(44 + dataByteLength);
+  const view = new DataView(buffer);
+
+  const writeString = (pos: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(pos + i, str.charCodeAt(i));
+    }
+  };
+
+  // Standard 44-byte RIFF/WAVE PCM header
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataByteLength, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // PCM fmt chunk size
+  view.setUint16(20, 1, true); // AudioFormat = 1 (PCM)
+  view.setUint16(22, 1, true); // NumChannels = 1 (Mono)
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // ByteRate = SampleRate * Channels * BitsPerSample/8
+  view.setUint16(32, 2, true); // BlockAlign = Channels * BitsPerSample/8
+  view.setUint16(34, 16, true); // BitsPerSample = 16
+  writeString(36, 'data');
+  view.setUint32(40, dataByteLength, true);
+
+  let sampleOffset = 44;
+  for (let i = 0; i < totalLength; i++) {
+    // 柔性壓限防削波失真
+    const boosted = merged[i] * gain;
+    const clamped = Math.max(-1, Math.min(1, boosted));
+    view.setInt16(sampleOffset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    sampleOffset += 2;
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
 export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
   const [audioMetrics, setAudioMetrics] = useState<AudioMetrics>({
     rawVolume: 0,
@@ -148,18 +215,24 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
   const [noiseFloor, setNoiseFloor] = useState(12);
   const [recordedFrames, setRecordedFrames] = useState(0);
 
-  // 原生錄音切片與 URL (A/B 36 原音重現)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  // 原生 Web Audio PCM WAV 錄音緩衝與 URL (零 Vite AudioWorklet 路徑依賴，100% 跨瀏覽器可播)
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const pcmSamplesCountRef = useRef<number>(0);
+  const recordingSampleRateRef = useRef<number>(44100);
+  const userAudioUrlRef = useRef<string | null>(null);
   const [userAudioBlob, setUserAudioBlob] = useState<Blob | null>(null);
   const [userAudioUrl, setUserAudioUrl] = useState<string | null>(null);
 
   // Web Audio 原生節點
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
   const micGainRef = useRef<GainNode | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const silentSinkRef = useRef<GainNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const unlockPromiseRef = useRef<Promise<boolean> | null>(null);
 
   // 預分配定長環形緩衝池 (0 GC Spike, 15s * 60fps = 900 槽位)
   const volumeBufferRef = useRef<Float32Array>(new Float32Array(BUFFER_CAPACITY));
@@ -221,57 +294,171 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     }
   }, []);
 
-  // 點擊手勢解鎖音訊上下文
-  const unlockAudio = useCallback(async (): Promise<boolean> => {
-    try {
-      if (!audioCtxRef.current) {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        audioCtxRef.current = new AudioContextClass();
-      }
-
-      if (audioCtxRef.current.state === 'suspended') {
-        await audioCtxRef.current.resume();
-      }
-
-      if (!streamRef.current) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: false, // 保留原聲情緒與氣聲細節
-            autoGainControl: false,  // 防止瀏覽器壓平音量動態反差
-          },
-        });
-        streamRef.current = stream;
-
-        const source = audioCtxRef.current.createMediaStreamSource(stream);
-        const micGain = audioCtxRef.current.createGain();
-        const compressor = audioCtxRef.current.createDynamicsCompressor();
-        const analyser = audioCtxRef.current.createAnalyser();
-
-        compressor.threshold.setValueAtTime(-18, audioCtxRef.current.currentTime);
-        compressor.knee.setValueAtTime(24, audioCtxRef.current.currentTime);
-        compressor.ratio.setValueAtTime(10, audioCtxRef.current.currentTime);
-        compressor.attack.setValueAtTime(0.003, audioCtxRef.current.currentTime);
-        compressor.release.setValueAtTime(0.15, audioCtxRef.current.currentTime);
-
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.4;
-
-        source.connect(micGain);
-        micGain.connect(compressor);
-        compressor.connect(analyser);
-
-        micGainRef.current = micGain;
-        compressorRef.current = compressor;
-        analyserRef.current = analyser;
-      }
-
-      setIsListening(true);
-      return true;
-    } catch (err) {
-      console.warn('[See How You Speak] Audio init failed:', err);
-      return false;
+  // 安全釋放既有的 Blob ObjectURL (重錄或卸載時防記憶體洩漏)
+  const revokeCurrentAudioUrl = useCallback(() => {
+    if (userAudioUrlRef.current) {
+      URL.revokeObjectURL(userAudioUrlRef.current);
+      userAudioUrlRef.current = null;
     }
+    setUserAudioUrl(null);
+    setUserAudioBlob(null);
+  }, []);
+
+  // 元件卸載時釋放 ObjectURL 與音訊管線資源
+  useEffect(() => {
+    return () => {
+      if (userAudioUrlRef.current) {
+        URL.revokeObjectURL(userAudioUrlRef.current);
+        userAudioUrlRef.current = null;
+      }
+      if (processorRef.current) {
+        processorRef.current.onaudioprocess = null;
+        try {
+          processorRef.current.disconnect();
+        } catch {
+          // Ignore disconnect errors on unmount
+        }
+      }
+      if (silentSinkRef.current) {
+        try {
+          silentSinkRef.current.disconnect();
+        } catch {
+          // Ignore disconnect errors on unmount
+        }
+      }
+    };
+  }, []);
+
+  // 點擊手勢解鎖音訊上下文 (防並發競態 + 音訊軌道存活檢查 + 掛載 PCM 錄音節點)
+  const unlockAudio = useCallback(async (): Promise<boolean> => {
+    if (unlockPromiseRef.current) {
+      return unlockPromiseRef.current;
+    }
+
+    const runUnlock = async (): Promise<boolean> => {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.warn('[See How You Speak] navigator.mediaDevices unavailable (requires HTTPS or localhost)');
+          return false;
+        }
+
+        if (!audioCtxRef.current) {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          audioCtxRef.current = new AudioContextClass();
+        }
+
+        if (audioCtxRef.current.state === 'suspended') {
+          // 防止無手勢自動初始化時 resume() 永久懸置；有手勢時會在 <5ms 內完成
+          await Promise.race([
+            audioCtxRef.current.resume().catch(() => {}),
+            new Promise<void>((resolve) => window.setTimeout(resolve, 250)),
+          ]);
+        }
+
+        const hasLiveTrack =
+          !!streamRef.current &&
+          streamRef.current.getAudioTracks().some((track) => track.readyState === 'live');
+
+        if (!hasLiveTrack) {
+          // 清理已失效的舊節點與串流
+          if (processorRef.current) {
+            processorRef.current.onaudioprocess = null;
+            try {
+              processorRef.current.disconnect();
+            } catch {
+              // Ignore
+            }
+            processorRef.current = null;
+          }
+          if (silentSinkRef.current) {
+            try {
+              silentSinkRef.current.disconnect();
+            } catch {
+              // Ignore
+            }
+            silentSinkRef.current = null;
+          }
+          if (sourceRef.current) {
+            try {
+              sourceRef.current.disconnect();
+            } catch {
+              // Ignore
+            }
+            sourceRef.current = null;
+          }
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => t.stop());
+            streamRef.current = null;
+          }
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: false, // 保留原聲情緒與氣聲細節
+              autoGainControl: false,  // 防止瀏覽器壓平音量動態反差
+            },
+          });
+          streamRef.current = stream;
+
+          const ctx = audioCtxRef.current;
+          const source = ctx.createMediaStreamSource(stream);
+          const micGain = ctx.createGain();
+          const compressor = ctx.createDynamicsCompressor();
+          const analyser = ctx.createAnalyser();
+
+          compressor.threshold.setValueAtTime(-18, ctx.currentTime);
+          compressor.knee.setValueAtTime(24, ctx.currentTime);
+          compressor.ratio.setValueAtTime(10, ctx.currentTime);
+          compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+          compressor.release.setValueAtTime(0.15, ctx.currentTime);
+
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.4;
+
+          source.connect(micGain);
+          micGain.connect(compressor);
+          compressor.connect(analyser);
+
+          // Web Audio 直接擷取經 Compressor 處理之單聲道 PCM (無外部 Worklet 路徑依賴，靜音匯流防迴授)
+          const processor = ctx.createScriptProcessor(4096, 1, 1);
+          const silentSink = ctx.createGain();
+          silentSink.gain.setValueAtTime(0, ctx.currentTime);
+
+          processor.onaudioprocess = (event: AudioProcessingEvent) => {
+            if (!isRecordingRef.current) return;
+            const inputData = event.inputBuffer.getChannelData(0);
+            const maxSamples = Math.floor((ctx.sampleRate || 44100) * 16.5);
+            if (pcmSamplesCountRef.current >= maxSamples) return;
+            const copy = new Float32Array(inputData.length);
+            copy.set(inputData);
+            pcmChunksRef.current.push(copy);
+            pcmSamplesCountRef.current += copy.length;
+          };
+
+          compressor.connect(processor);
+          processor.connect(silentSink);
+          silentSink.connect(ctx.destination);
+
+          sourceRef.current = source;
+          micGainRef.current = micGain;
+          compressorRef.current = compressor;
+          analyserRef.current = analyser;
+          processorRef.current = processor;
+          silentSinkRef.current = silentSink;
+        }
+
+        setIsListening(true);
+        return true;
+      } catch (err) {
+        console.warn('[See How You Speak] Audio init failed:', err);
+        return false;
+      } finally {
+        unlockPromiseRef.current = null;
+      }
+    };
+
+    unlockPromiseRef.current = runUnlock();
+    return unlockPromiseRef.current;
   }, []);
 
   // 300ms 環境底噪自動校準 (Noise Gate Calibration)
@@ -370,13 +557,18 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     requestAnimationFrame(loop);
   }, [unlockAudio, muteInput, noiseFloor]);
 
-  // 啟動錄音 (支援最長 15 秒環形緩衝池)
+  // 啟動錄音 (支援最長 15 秒環形緩衝池 + 16-bit PCM WAV 擷取)
   const startRecording = useCallback(() => {
+    // 重錄前先釋放舊的 ObjectURL，避免殘留舊檔或記憶體洩漏
+    revokeCurrentAudioUrl();
+
     headPointerRef.current = 0;
     recordedFramesRef.current = 0;
     recordedMaxPauseMsRef.current = 0;
     settledPauseMsRef.current = 0;
     silenceStartMsRef.current = null;
+    pcmChunksRef.current = [];
+    pcmSamplesCountRef.current = 0;
     volumeBufferRef.current.fill(0);
     pitchBufferRef.current.fill(0);
     jitterBufferRef.current.fill(0);
@@ -388,69 +580,43 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     setRecordedFrames(0);
 
     if (audioCtxRef.current) {
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      recordingSampleRateRef.current = audioCtxRef.current.sampleRate || 44100;
       recordingStartAudioTimeRef.current = audioCtxRef.current.currentTime;
       if (micGainRef.current) {
         micGainRef.current.gain.cancelScheduledValues(audioCtxRef.current.currentTime);
         micGainRef.current.gain.setValueAtTime(1.0, audioCtxRef.current.currentTime);
       }
     }
-    isRecordingRef.current = true;
     muteInput(false);
-    calibrateNoiseFloor();
+    isRecordingRef.current = true;
+  }, [muteInput, revokeCurrentAudioUrl]);
 
-    // 啟動 MediaRecorder 串流錄製
-    audioChunksRef.current = [];
-    if (streamRef.current && typeof MediaRecorder !== 'undefined') {
-      try {
-        const candidateTypes = [
-          'audio/webm;codecs=opus',
-          'audio/webm',
-          'audio/mp4',
-          'audio/aac',
-          'audio/ogg',
-        ];
-        const mimeType =
-          candidateTypes.find((type) => {
-            try {
-              return MediaRecorder.isTypeSupported(type);
-            } catch {
-              return false;
-            }
-          }) || '';
-
-        const options = mimeType ? { mimeType } : undefined;
-        const mr = new MediaRecorder(streamRef.current, options);
-        mr.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-        mr.onstop = () => {
-          const blobType = mr.mimeType || mimeType || 'audio/webm';
-          const blob = new Blob(audioChunksRef.current, { type: blobType });
-          setUserAudioBlob(blob);
-          const url = URL.createObjectURL(blob);
-          setUserAudioUrl(url);
-        };
-        mr.start(100);
-        mediaRecorderRef.current = mr;
-      } catch (e) {
-        console.warn('[See How You Speak] MediaRecorder init failed:', e);
-      }
-    }
-  }, [muteInput, calibrateNoiseFloor]);
-
-  // 結束錄音
+  // 結束錄音並同步封裝標準 16-bit PCM WAV Blob (附自動峰值正規化)
   const stopRecording = useCallback(() => {
+    if (!isRecordingRef.current) return;
     isRecordingRef.current = false;
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        // Ignore stop errors on already-closed recorder
+
+    const chunks = pcmChunksRef.current;
+    const sampleRate = recordingSampleRateRef.current || audioCtxRef.current?.sampleRate || 44100;
+    const wavBlob = encodeWavBlob(chunks, sampleRate);
+    pcmChunksRef.current = [];
+    pcmSamplesCountRef.current = 0;
+
+    if (wavBlob && wavBlob.size > 44) {
+      if (userAudioUrlRef.current) {
+        URL.revokeObjectURL(userAudioUrlRef.current);
       }
+      const url = URL.createObjectURL(wavBlob);
+      userAudioUrlRef.current = url;
+      setUserAudioBlob(wavBlob);
+      setUserAudioUrl(url);
+    } else {
+      revokeCurrentAudioUrl();
     }
-  }, []);
+  }, [revokeCurrentAudioUrl]);
 
   // 取得聲卡 DAC 硬體已消耗秒數
   const getElapsedHardwareTime = useCallback(() => {
@@ -460,13 +626,10 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
 
   // 釋放記憶體 Blob URL
   const clearRecordedAudio = useCallback(() => {
-    if (userAudioUrl) {
-      URL.revokeObjectURL(userAudioUrl);
-    }
-    setUserAudioUrl(null);
-    setUserAudioBlob(null);
-    audioChunksRef.current = [];
-  }, [userAudioUrl]);
+    revokeCurrentAudioUrl();
+    pcmChunksRef.current = [];
+    pcmSamplesCountRef.current = 0;
+  }, [revokeCurrentAudioUrl]);
 
   // 取得有效切片與 MATS 摘要統計資料
   const getValidRecordings = useCallback(() => {

@@ -313,6 +313,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setSpeakState('SCORE_ANALYSIS');
   }, [stopRecording, getValidRecordings, noiseFloor, selectedScenario]);
 
+  // 保持最新 finishRecording 參照，避免 noiseFloor 或其他 state 變動觸發 Slide 3 錄音 useEffect 重跑
+  const finishRecordingRef = useRef(finishRecording);
+  useEffect(() => {
+    finishRecordingRef.current = finishRecording;
+  }, [finishRecording]);
+
   // 4. 進入 Slide 3: 先跑 READY ? -> 3 -> 2 -> 1，倒數完畢自動開啟最長 15 秒錄音
   const enterRecordingStage = useCallback(async () => {
     if (previewVideoRef.current) {
@@ -333,7 +339,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setSpeakState('RECORDING');
   }, [unlockAudio, setMuteInput]);
 
-  // Slide 3 READY ? -> 3 -> 2 -> 1 時間軸與 15 秒錄音硬體時鐘
+  // Slide 3 READY ? -> 3 -> 2 -> 1 時間軸與 15 秒錄音硬體時鐘 (嚴格僅隨 speakState === 'RECORDING' 啟動一次)
   useEffect(() => {
     if (speakState !== 'RECORDING') return;
 
@@ -343,6 +349,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     const beginActiveCapture = async () => {
       if (cancelled) return;
       await unlockAudio();
+      if (cancelled) return;
       setMuteInput(false);
       startRecording();
       setReadyStep('LIVE');
@@ -358,7 +365,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         setRecordProgress(Math.min(100, (elapsed / MAX_RECORD_SEC) * 100));
 
         if (elapsed >= MAX_RECORD_SEC) {
-          finishRecording();
+          finishRecordingRef.current();
         } else {
           animFrameIdRef.current = requestAnimationFrame(tick);
         }
@@ -379,7 +386,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         animFrameIdRef.current = null;
       }
     };
-  }, [speakState, unlockAudio, setMuteInput, startRecording, getElapsedHardwareTime, finishRecording]);
+  }, [speakState, unlockAudio, setMuteInput, startRecording, getElapsedHardwareTime]);
 
   // 5. Slide 4 -> 5 -> 6 動畫與計時控制 (% 數字計數從模糊到清晰 + 自動推動 + 5秒後顯示 flow back~)
   useEffect(() => {
@@ -475,9 +482,15 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     const audio = new Audio(userAudioUrl);
     replayAudioRef.current = audio;
     audio.onended = () => setIsPlayingUserVoice(false);
-    audio.onerror = () => setIsPlayingUserVoice(false);
+    audio.onerror = (err) => {
+      console.warn('[See How You Speak] Audio replay failed:', err);
+      setIsPlayingUserVoice(false);
+    };
     setIsPlayingUserVoice(true);
-    audio.play().catch(() => setIsPlayingUserVoice(false));
+    audio.play().catch((err) => {
+      console.warn('[See How You Speak] Audio play() rejected:', err);
+      setIsPlayingUserVoice(false);
+    });
   }, [userAudioUrl, isPlayingUserVoice]);
 
   // 7. Cytus II 滾輪驅動控制器 (Slide 1 -> Slide 2, Slide 2 Coverflow 水平移動, Slide 4/5/6 三階轉場)
@@ -514,7 +527,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
   // 8. Omni-Input 整合遙控與快捷鍵
   const handleOmniAction = useCallback(
-    (action: OmniActionType, _source: OmniInputSource, payload?: any) => {
+    (action: OmniActionType, source: OmniInputSource, payload?: any) => {
+      // 開啟小卡預覽、正在播放原音、或開啟維護抽屜時，嚴格封鎖看門狗自動跳頁與踢回首頁
+      if (source === 'watchdog' && (showDetailModal || isPlayingUserVoice || isMaintainerOpen)) {
+        return;
+      }
       if (action === 'TOGGLE_REMOTE_DRAWER') {
         setIsMaintainerOpen((prev) => !prev);
         return;
@@ -586,6 +603,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       finishRecording,
       enterRecordingStage,
       unlockAudio,
+      showDetailModal,
+      isPlayingUserVoice,
+      isMaintainerOpen,
     ]
   );
 
@@ -595,6 +615,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     voiceTriggerLocked: isVideoPlayingUnmuted || isPlayingUserVoice,
     onAction: handleOmniAction,
     enableVoiceVad,
+    watchdogPaused: showDetailModal || isPlayingUserVoice || isMaintainerOpen,
   });
 
   // 結算海報 QR Code URL (與 SpeakExportModal 共用統一規範，離線攜帶聲學 DNA 切片)

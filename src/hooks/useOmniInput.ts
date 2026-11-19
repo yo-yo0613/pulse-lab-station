@@ -10,6 +10,7 @@ interface UseOmniInputProps {
   voiceTriggerLocked?: boolean; // 示範影片播放時為 true，防喇叭自激 (7.22)
   onAction: (action: OmniActionType, source: OmniInputSource, payload?: any) => void;
   enableVoiceVad?: boolean;
+  watchdogPaused?: boolean; // 開啟小卡預覽、回放錄音或維護抽屜時暫停看門狗自動跳頁/踢回首頁
 }
 
 export function useOmniInput({
@@ -18,6 +19,7 @@ export function useOmniInput({
   voiceTriggerLocked = false,
   onAction,
   enableVoiceVad = true,
+  watchdogPaused = false,
 }: UseOmniInputProps) {
   const [lastActionSource, setLastActionSource] = useState<OmniInputSource | null>(null);
   const [lastActionTime, setLastActionTime] = useState<number>(0);
@@ -157,6 +159,11 @@ export function useOmniInput({
 
   // 階梯式看門狗無人自動退回機制 (Tiered Watchdog Timer - A/B 32)
   useEffect(() => {
+    if (watchdogPaused) {
+      setWatchdogRemaining(null);
+      return;
+    }
+
     let timer: number | null = null;
     let countdownInterval: number | null = null;
 
@@ -194,7 +201,7 @@ export function useOmniInput({
       if (timer) clearTimeout(timer);
       if (countdownInterval) clearInterval(countdownInterval);
     };
-  }, [currentState, dispatchAction, lastActionTime]);
+  }, [currentState, dispatchAction, lastActionTime, watchdogPaused]);
 
   // 本地 Peer / Web 廣播匯流排 (A/B 30)
   useEffect(() => {
