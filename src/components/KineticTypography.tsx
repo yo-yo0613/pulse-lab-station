@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useMemo } from 'react';
-import type { AudioMetrics } from '../types/speak';
+import type { AudioMetrics, CharAcousticSnapshot } from '../types/speak';
 
 export interface KineticTypographyProps {
   text: string;
@@ -9,6 +9,9 @@ export interface KineticTypographyProps {
   accentColor?: string;
   variant?: 'hero' | 'preview' | 'card';
   aestheticMode?: 'monochrome' | 'cyber';
+  darkSurface?: boolean; // 於深色影片視窗內顯示高對比白/琥珀金 KTV 填色
+  ktvMode?: boolean;     // 啟用 KTV 逐字填色 + 已唸字詞聲學定格快照
+  charSnapshots?: CharAcousticSnapshot[];
   showTelemetry?: boolean;
   volumeSlice?: Float32Array;
   pitchSlice?: Float32Array;
@@ -58,6 +61,9 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   accentColor = '#00F0FF',
   variant = 'hero',
   aestheticMode = 'cyber',
+  darkSurface = false,
+  ktvMode = false,
+  charSnapshots,
   showTelemetry = false,
   volumeSlice,
   pitchSlice,
@@ -70,8 +76,13 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
   const phaseTickRef = useRef<number>(0);
 
   const isMonochrome = aestheticMode === 'monochrome';
-  const baseInk = isMonochrome ? '#000000' : '#FFFFFF';
-  const dimInk = isMonochrome ? 'rgba(0, 0, 0, 0.48)' : 'rgba(255, 255, 255, 0.58)';
+  const baseInk = darkSurface ? '#FFFFFF' : isMonochrome ? '#000000' : '#FFFFFF';
+  const dimInk = darkSurface
+    ? 'rgba(255, 255, 255, 0.34)'
+    : isMonochrome
+    ? 'rgba(0, 0, 0, 0.42)'
+    : 'rgba(255, 255, 255, 0.58)';
+  const ktvAccentInk = darkSurface ? '#F5A623' : '#111111';
 
   // 將文字拆分為字元陣列 (逐字元 GPU 幾何延展)
   const chars = useMemo(() => Array.from(text), [text]);
@@ -175,6 +186,65 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     phaseTickRef.current += 1;
     const count = Math.max(1, chars.length);
+
+    // ========================================================
+    // 分支 KTV：PDF 前三頁「2 錄音 / 3 看效果」逐字填色 + 定格聲學快照引擎
+    // ========================================================
+    if (ktvMode && charSnapshots && charSnapshots.length > 0) {
+      container.style.transform = 'scale(1.0)';
+      container.style.filter = 'none';
+      container.style.textShadow = 'none';
+
+      charsRef.current.forEach((el, idx) => {
+        if (!el) return;
+        const snap = charSnapshots[idx];
+        if (!snap) return;
+
+        const fillPct = clamp(Math.round(snap.fillProgress * 100), 0, 100);
+        const sScale = clamp(snap.scale, 0.78, 1.55);
+        const sY = clamp(snap.yOffset, -22, 22);
+        const sX = clamp(snap.scaleX, 0.85, 2.1);
+        const sSpace = clamp(snap.letterSpacing, -1, 12);
+
+        el.style.display = 'inline-block';
+        el.style.transformOrigin = 'center bottom';
+        el.style.fontWeight = `${clamp(snap.weight, 500, 900)}`;
+        el.style.letterSpacing = `${sSpace.toFixed(1)}px`;
+        el.style.marginRight = `${Math.max(0, sSpace).toFixed(1)}px`;
+        el.style.transform = `translate3d(0, ${sY.toFixed(1)}px, 0) scaleX(${sX.toFixed(2)}) scale(${sScale.toFixed(2)})`;
+
+        if (fillPct >= 99) {
+          // 已完成填色或回放中已定格的字：高能量或拉長字使用重點色突顯
+          el.style.backgroundImage = 'none';
+          el.style.webkitBackgroundClip = 'border-box';
+          el.style.webkitTextFillColor = 'currentColor';
+          el.style.color = snap.isHighlight ? ktvAccentInk : baseInk;
+          el.style.opacity = '1';
+          el.style.textShadow = snap.isHighlight
+            ? darkSurface
+              ? '0 4px 16px rgba(245, 166, 35, 0.38)'
+              : '0 4px 12px rgba(0, 0, 0, 0.22)'
+            : 'none';
+        } else if (fillPct > 0) {
+          // 正在唸的當前字：由左至右 KTV 漸進填色 + 即時聲學縮放
+          el.style.backgroundImage = `linear-gradient(90deg, ${ktvAccentInk} ${fillPct}%, ${dimInk} ${fillPct}%)`;
+          el.style.webkitBackgroundClip = 'text';
+          el.style.webkitTextFillColor = 'transparent';
+          el.style.color = ktvAccentInk;
+          el.style.opacity = '1';
+          el.style.textShadow = 'none';
+        } else {
+          // 尚未唸到的字：保持半透明基準灰
+          el.style.backgroundImage = 'none';
+          el.style.webkitBackgroundClip = 'border-box';
+          el.style.webkitTextFillColor = 'currentColor';
+          el.style.color = dimInk;
+          el.style.opacity = '0.78';
+          el.style.textShadow = 'none';
+        }
+      });
+      return;
+    }
 
     // ========================================================
     // 分支 A：卡片雙態回放引擎 (Dual-State Acoustic Subtitle)
@@ -365,6 +435,10 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
 
     charsRef.current.forEach((el, idx) => {
       if (!el) return;
+      el.style.backgroundImage = 'none';
+      el.style.webkitBackgroundClip = 'border-box';
+      el.style.webkitTextFillColor = 'currentColor';
+      el.style.marginRight = '0px';
 
       // 示範頁逐字卡拉OK彈跳焦點 (搭配 phraseCycles)
       if (variant === 'preview' && activeCharIndex !== undefined) {
@@ -382,7 +456,7 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
           const burstScale = clamp(1.22 + (smoothVolume / 100) * 0.22, 1.0, 1.55);
           const burstY = clamp(macroY * 0.45 - 6, -20, 20);
           el.style.fontWeight = '900';
-          el.style.color = baseInk;
+          el.style.color = darkSurface ? ktvAccentInk : baseInk;
           el.style.opacity = '1.0';
           el.style.transform = `translateY(${burstY.toFixed(1)}px) scale(${burstScale.toFixed(2)}) scaleX(${Math.min(1.55, matsScaleX).toFixed(2)})`;
           el.style.textShadow = isMonochrome
@@ -437,8 +511,12 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
     isPlaying,
     activeCharIndex,
     isMonochrome,
+    darkSurface,
+    ktvMode,
+    charSnapshots,
     baseInk,
     dimInk,
+    ktvAccentInk,
   ]);
 
   return (

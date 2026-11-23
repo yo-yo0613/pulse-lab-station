@@ -40,6 +40,17 @@ export interface PhraseCharTiming {
   endSec: number;
 }
 
+export interface CharAcousticSnapshot {
+  char: string;
+  scale: number;         // 音量 -> 字體縮放 (0.78 ~ 1.55)
+  yOffset: number;       // 音高 -> 垂直位移 (-20 ~ +20 px)
+  scaleX: number;        // 延音 -> 水平拉伸 (1.0 ~ 2.1)
+  letterSpacing: number; // 語速/停頓 -> 字距 (-1 ~ 12 px)
+  weight: number;        // 字重 (500 ~ 900)
+  fillProgress: number;  // KTV 逐字填色進度 (0 ~ 1)
+  isHighlight?: boolean; // 是否為重音/長音強調字
+}
+
 export interface PhraseCycle {
   startSec: number;
   endSec: number;
@@ -56,6 +67,11 @@ export interface PromptScenario {
   tagFocus?: string;         // MATS acoustic dimension highlight for TAG card
   line: string;
   hint: string;
+  contextDesc?: string;      // 一句話交代情境鋪陳 (PDF Page 5)
+  difficultyStars?: 1 | 2 | 3; // 難度星級 (1~3)
+  imitateStartSec?: number;  // 模仿段於完整情境影片中的起始秒數
+  imitateEndSec?: number;    // 模仿段於完整情境影片中的結束秒數
+  muteVideoUrl?: string;     // 選填：去掉人聲的模仿片段影片路徑
   themeColor: string;
   accentColor: string;
   durationSeconds: number;
@@ -85,8 +101,11 @@ export interface MATSMetricsSummary {
 
 export interface ScoreResult {
   overallScore: number;     // 0 ~ 100 綜合相似度
-  volumeScore: number;      // 音量起伏相似度 (60% 權重)
-  pitchScore: number;       // 音高走勢相似度 (40% 權重)
+  volumeScore: number;      // 音量起伏相似度
+  pitchScore: number;       // 音高走勢相似度
+  sustainScore?: number;    // 延音時長相似度 (0 ~ 100)
+  rateScore?: number;       // 語速節奏相似度 (0 ~ 100)
+  personaTitle?: string;    // 語氣風格封號 (例如：情緒張力型)
   rank: string;             // SSS / SS / S / A
   rankTitle: string;        // 聲動大師 / 靈魂共鳴者 / 聲學實力派 / 能量突變者
   comment: string;
