@@ -301,14 +301,6 @@ function derivePersonaAndFourScores(
   return { sustainScore, rateScore, personaTitle, coachingComment };
 }
 
-// 首頁背景漂浮動態字幕示範卡片清單
-const LANDING_FLOATING_DEMOS = [
-  { text: '火車上有鱷魚！', tag: '驚恐高頻', pos: 'top-[15%] left-[6%]', emphasisIdx: 4 },
-  { text: '噢～更愛你了！', tag: '怒火爆發', pos: 'top-[18%] right-[7%]', emphasisIdx: 2 },
-  { text: '是一隻長頸鹿欸～！', tag: '驚喜延音', pos: 'bottom-[24%] left-[7%]', emphasisIdx: 6 },
-  { text: '打我啊！笨蛋！', tag: '挑釁頓挫', pos: 'bottom-[22%] right-[7%]', emphasisIdx: 0 },
-];
-
 export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMode }) => {
   const [speakState, setSpeakState] = useState<SpeakState>('LANDING');
   const [selectedScenario, setSelectedScenario] = useState<PromptScenario>(PROMPT_SCENARIOS[0]);
@@ -368,13 +360,17 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const isDraggingTimelineRef = useRef<boolean>(false);
 
   // ============================================================================
-  // Page 4: 結算頁 (% 波浪湧升 -> 左欄 9:16 動態配音小卡 + 右欄 4 維度 & QR + 右上 28s SVG 倒數環)
+  // Page 4: 結算頁 (% 波浪湧升 -> 左欄 9:16 動態配音小卡 + 右欄 4 維度 & QR + 右上 30s SVG 倒數環)
   // ============================================================================
   const [resultSubStage, setResultSubStage] = useState<0 | 1 | 2>(0);
   const [animatedScore, setAnimatedScore] = useState<number>(0);
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
-  const [resultCountdownSec, setResultCountdownSec] = useState<number>(28);
+  const [resultCountdownSec, setResultCountdownSec] = useState<number>(30);
   const resultCardVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // 首頁 BGM 控制 (離開首頁即自動停止)
+  const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [bgmMuted, setBgmMuted] = useState<boolean>(false);
 
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [userRecordedVolume, setUserRecordedVolume] = useState<Float32Array>(new Float32Array(0));
@@ -489,7 +485,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
       const curTime = vid.currentTime;
       const progress = Math.max(0, Math.min(1, curTime / vid.duration));
-      const charIdx = resolveScenarioCharIndex(sc, curTime, progress);
+      const lineCharsCount = Math.max(1, Array.from(sc.line).length);
+      const charIdx = sc.selectionVideoUrl
+        ? Math.min(lineCharsCount - 1, Math.floor(progress * lineCharsCount))
+        : resolveScenarioCharIndex(sc, curTime, progress);
       setPreviewActiveCharIndex(charIdx);
 
       const isActiveSpeech = charIdx >= 0 && charIdx < Array.from(sc.line).length;
@@ -853,7 +852,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
     setScoreResult(finalRes);
     setResultSubStage(0);
-    setResultCountdownSec(28);
+    setResultCountdownSec(30);
     setShowDetailModal(false);
     setSpeakState('SCORE_ANALYSIS');
   }, [
@@ -951,10 +950,43 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     handleRestartRef.current = handleRestart;
   }, [handleRestart]);
 
-  // Page 4 右上角「28 秒後自動回首頁」可視化 SVG 圓形倒數進度環 (隱性問題 05 防線)
+  // 首頁 BGM 循環播放控制 (僅在 LANDING 頁面播放，離開即停，並支援瀏覽器首次互動自動解鎖)
+  useEffect(() => {
+    const bgm = bgmAudioRef.current;
+    if (!bgm) return;
+
+    if (speakState !== 'LANDING' || bgmMuted) {
+      bgm.pause();
+      if (speakState !== 'LANDING') {
+        bgm.currentTime = 0;
+      }
+      return;
+    }
+
+    bgm.volume = 0.28;
+    const tryPlay = () => {
+      if (speakState === 'LANDING' && !bgmMuted) {
+        bgm.play().catch(() => {});
+      }
+    };
+    tryPlay();
+
+    const unlockOnInteract = () => {
+      tryPlay();
+    };
+    window.addEventListener('pointerdown', unlockOnInteract, { once: true });
+    window.addEventListener('keydown', unlockOnInteract, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlockOnInteract);
+      window.removeEventListener('keydown', unlockOnInteract);
+    };
+  }, [speakState, bgmMuted]);
+
+  // Page 4 右上角「30 秒後自動回首頁」可視化 SVG 圓形倒數進度環 (試聽原音或開啟匯出視窗時暫停)
   useEffect(() => {
     if (speakState !== 'SCORE_ANALYSIS' || resultSubStage === 0) return;
-    if (showDetailModal || isMaintainerOpen) return;
+    if (showDetailModal || isMaintainerOpen || isPlayingUserVoice) return;
 
     const timer = window.setInterval(() => {
       setResultCountdownSec((prev) => {
@@ -967,12 +999,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [speakState, resultSubStage, showDetailModal, isMaintainerOpen]);
+  }, [speakState, resultSubStage, showDetailModal, isMaintainerOpen, isPlayingUserVoice]);
 
-  // 在結算頁有任何滑鼠點擊或滾輪互動時，重置 28 秒倒數環，避免使用者操作中途被切掉
+  // 在結算頁有任何滑鼠點擊或滾輪互動時，重置 30 秒倒數環，避免使用者操作中途被切掉
   const resetResultCountdown = useCallback(() => {
     if (speakState === 'SCORE_ANALYSIS') {
-      setResultCountdownSec(28);
+      setResultCountdownSec(30);
     }
   }, [speakState]);
 
@@ -1208,19 +1240,23 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   }, [activeRailItem]);
 
   // Slide 1 水面倒影微動態波形位移 + 標題逐詞聲控物理量
-  const reflectionWaveShift = audioMetrics.isVoiceActive
+  // 調高首頁觸發門檻，避免現場喇叭播放 BGM 造成誤觸發
+  const landingVoiceActive =
+    audioMetrics.isVoiceActive &&
+    audioMetrics.smoothVolume > Math.max(26, noiseFloor * 1.45);
+  const reflectionWaveShift = landingVoiceActive
     ? Math.max(-5, Math.min(5, audioMetrics.pitchYOffset * 0.22))
     : 0;
-  const heroVolNorm = audioMetrics.isVoiceActive ? audioMetrics.smoothVolume / 100 : 0;
-  const heroPitchOffset = audioMetrics.isVoiceActive
+  const heroVolNorm = landingVoiceActive ? audioMetrics.smoothVolume / 100 : 0;
+  const heroPitchOffset = landingVoiceActive
     ? clampVal(audioMetrics.pitchYOffset * 0.55, -18, 18)
     : 0;
   const heroSustainScaleX =
-    audioMetrics.isVoiceActive && audioMetrics.sustainedDuration > 0.2
+    landingVoiceActive && audioMetrics.sustainedDuration > 0.2
       ? clampVal(1 + audioMetrics.sustainedDuration * 0.45, 1, 1.48)
       : 1;
   const heroJitterX =
-    audioMetrics.isVoiceActive && (audioMetrics.jitter ?? 0) > 1.5
+    landingVoiceActive && (audioMetrics.jitter ?? 0) > 1.5
       ? Math.sin(audioMetrics.rawVolume) * 2.2
       : 0;
 
@@ -1239,7 +1275,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
   // SVG 倒數進度環參數 (r = 11, circumference ≈ 69.1)
   const ringCircumference = 2 * Math.PI * 11;
-  const ringDashOffset = ringCircumference * (1 - clampVal(resultCountdownSec / 28, 0, 1));
+  const ringDashOffset = ringCircumference * (1 - clampVal(resultCountdownSec / 30, 0, 1));
 
   return (
     <div
@@ -1354,50 +1390,18 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             transition={{ duration: 0.45 }}
             className="relative z-10 w-full h-full flex flex-col items-center justify-center px-6"
           >
-            {/* 背景四周低透明度浮現的動態字幕與情境示範彈幕 (Canva 白板共識 + PDF Page 4) */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {LANDING_FLOATING_DEMOS.map((demo, dIdx) => (
-                <motion.div
-                  key={demo.text}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{
-                    opacity: [0.18, 0.34, 0.18],
-                    y: [0, dIdx % 2 === 0 ? -8 : 8, 0],
-                  }}
-                  transition={{
-                    duration: 5.2 + dIdx * 0.8,
-                    repeat: Infinity,
-                    ease: 'easeInOut',
-                  }}
-                  className={`hidden md:flex flex-col gap-1 absolute ${demo.pos} px-4 py-2.5 rounded-2xl bg-black/[0.03] border border-black/[0.07] backdrop-blur-[1px]`}
-                >
-                  <span className="font-iosevka text-[9px] tracking-[0.2em] text-black/40 uppercase">
-                    {demo.tag}
-                  </span>
-                  <div className="font-mats-tc font-bold text-lg text-black/55 flex items-baseline gap-0.5">
-                    {Array.from(demo.text).map((ch, cIdx) => {
-                      const isEmp = cIdx === demo.emphasisIdx;
-                      return (
-                        <span
-                          key={cIdx}
-                          className="inline-block"
-                          style={{
-                            transform: isEmp
-                              ? 'translateY(-6px) scale(1.36) scaleX(1.25)'
-                              : cIdx % 2 === 1
-                              ? 'translateY(3px) scale(0.92)'
-                              : 'none',
-                            fontWeight: isEmp ? 900 : 500,
-                          }}
-                        >
-                          {ch}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+            {/* 首頁循環 BGM (離開首頁即自動停止) */}
+            <audio ref={bgmAudioRef} src="/audio/bgm_landing.mp3" loop preload="auto" />
+
+            {/* 右上角 / 左上角極簡 BGM 靜音切換 */}
+            <button
+              onClick={() => setBgmMuted((m) => !m)}
+              className="fixed top-4 left-4 z-30 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white border border-black/15 shadow-sm flex items-center gap-1.5 text-[11px] font-iosevka text-black/75 cursor-pointer transition-all"
+              title={bgmMuted ? '開啟首頁背景音樂' : '靜音首頁背景音樂'}
+            >
+              {bgmMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+              <span>{bgmMuted ? 'BGM OFF' : 'BGM ON'}</span>
+            </button>
 
             {/* 中央主標題與水面鏡像倒影：每個單字隨麥克風音量變大、隨音高上下跳動、隨延音拉長 */}
             <div className="relative flex flex-col items-center justify-center select-none pointer-events-none">
@@ -1460,7 +1464,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 className="font-yuji text-[clamp(2.2rem,5.4vw,4.35rem)] leading-[1.08] text-black/75 tracking-tight text-center water-reflection-mask"
                 style={{
                   transform: `scaleY(-1) translateX(${reflectionWaveShift.toFixed(1)}px) scaleX(${heroSustainScaleX.toFixed(2)})`,
-                  filter: `blur(${audioMetrics.isVoiceActive ? 1.9 : 1.1}px)`,
+                  filter: `blur(${landingVoiceActive ? 1.9 : 1.1}px)`,
                 }}
               >
                 See How You Speak.
@@ -1477,7 +1481,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               >
                 <Mic
                   className={`w-3.5 h-3.5 ${
-                    audioMetrics.isVoiceActive ? 'text-black animate-bounce' : 'text-black/55'
+                    landingVoiceActive ? 'text-black animate-bounce' : 'text-black/55'
                   }`}
                 />
                 <span>
@@ -1519,20 +1523,24 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             transition={{ duration: 0.45 }}
             className="relative z-10 w-full h-full flex flex-col items-center justify-between pt-14 pb-6 px-4 sm:px-8"
           >
-            {/* 背景微透明預覽影片 (Netflix 預播氛圍，保持極簡黑白調性) */}
-            {activeRailItem?.kind === 'scenario' && activeRailItem.scenario.videoPromptUrl && (
-              <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-[0.08]">
-                <video
-                  key={`bg-${activeRailItem.scenario.id}`}
-                  src={activeRailItem.scenario.videoPromptUrl}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover grayscale blur-[2px] scale-105"
-                />
-              </div>
-            )}
+            {/* 背景微透明預覽影片 (選擇階段使用 *-選片.mp4，保持極簡黑白調性) */}
+            {activeRailItem?.kind === 'scenario' &&
+              (activeRailItem.scenario.selectionVideoUrl || activeRailItem.scenario.videoPromptUrl) && (
+                <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-[0.08]">
+                  <video
+                    key={`bg-${activeRailItem.scenario.id}`}
+                    src={
+                      activeRailItem.scenario.selectionVideoUrl ||
+                      activeRailItem.scenario.videoPromptUrl
+                    }
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover grayscale blur-[2px] scale-105"
+                  />
+                </div>
+              )}
 
             {/* 頂部操作輔助列 */}
             <div className="relative z-20 w-full max-w-6xl flex items-center justify-between text-[11px] font-iosevka text-black/60">
@@ -1623,15 +1631,16 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                     {/* 側邊非焦點卡：改為「影片壓暗縮圖 + 台詞預覽」 (Canva 白板便利貼共識) */}
                     {!isCenter && (
                       <div className="relative w-full h-full flex flex-col justify-between p-6 bg-neutral-900 text-white overflow-hidden">
-                        {item.kind === 'scenario' && item.scenario.videoPromptUrl && (
-                          <video
-                            src={item.scenario.videoPromptUrl}
-                            muted
-                            playsInline
-                            preload="metadata"
-                            className="absolute inset-0 w-full h-full object-cover opacity-35 grayscale brightness-75 pointer-events-none"
-                          />
-                        )}
+                        {item.kind === 'scenario' &&
+                          (item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl) && (
+                            <video
+                              src={item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              className="absolute inset-0 w-full h-full object-cover opacity-35 grayscale brightness-75 pointer-events-none"
+                            />
+                          )}
                         <div className="relative z-10 flex items-center justify-between text-[10px] font-iosevka text-white/65">
                           <span>
                             {item.kind === 'tag'
@@ -1700,11 +1709,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         {/* 左欄：原片預覽視窗 + 字幕效果預覽框 */}
                         <div className="md:col-span-7 flex flex-col gap-2.5 justify-between">
                           <div className="relative w-full flex-1 min-h-[155px] rounded-[20px] overflow-hidden bg-black/95 border border-black/15 flex items-center justify-center group">
-                            {item.scenario.videoPromptUrl && (
+                            {(item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl) && (
                               <video
                                 key={item.scenario.id}
                                 ref={previewVideoRef}
-                                src={item.scenario.videoPromptUrl}
+                                src={item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl}
                                 autoPlay
                                 loop
                                 playsInline
@@ -1738,8 +1747,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                               )}
                             </button>
                             <span className="absolute top-2.5 left-2.5 px-2.5 py-0.5 rounded-full bg-black/70 text-white/90 font-iosevka text-[10px]">
-                              模仿段 {formatTimeShort(item.scenario.imitateStartSec ?? 0.5)}–
-                              {formatTimeShort(item.scenario.imitateEndSec ?? 5.5)}
+                              {item.scenario.selectionVideoUrl
+                                ? `精華預覽 · 模仿 ${scImitateDur} 秒`
+                                : `模仿段 ${formatTimeShort(item.scenario.imitateStartSec ?? 0.5)}–${formatTimeShort(item.scenario.imitateEndSec ?? 5.5)}`}
                             </span>
                           </div>
 
@@ -2355,13 +2365,18 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                   {/* 左欄主角：9:16 直式動態配音小卡 (影片 + 你的聲音 + 動態字幕循環播放) */}
                   <div className="md:col-span-5 flex flex-col items-center justify-center">
                     <div className="w-full max-w-[275px] sm:max-w-[300px] aspect-[9/16] max-h-[68vh] rounded-[26px] bg-neutral-950 text-white border border-black/25 shadow-[0_24px_65px_rgba(0,0,0,0.28)] p-4 flex flex-col justify-between overflow-hidden">
-                      <div className="flex items-center justify-between">
-                        <span className="font-iosevka text-[10px] tracking-[0.24em] text-white/55">
-                          SEE HOW YOU SPEAK
-                        </span>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="font-iosevka text-[10px] tracking-[0.22em] text-white/60 block">
+                            SEE HOW YOU SPEAK
+                          </span>
+                          <span className="font-iosevka text-[9px] text-white/40 block mt-0.5">
+                            {scoreResult.timestamp}
+                          </span>
+                        </div>
                         <button
                           onClick={toggleReplayUserVoice}
-                          className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-white font-mats-tc text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all"
+                          className="shrink-0 px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-white font-mats-tc text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all"
                         >
                           {isPlayingUserVoice ? (
                             <>
@@ -2377,10 +2392,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         </button>
                       </div>
 
-                      {/* 9:16 小卡內部影片與玩家動態字幕舞台 */}
+                      {/* 9:16 小卡內部影片與玩家動態字幕舞台 (object-contain 確保 4:3/16:9 橫式人臉不被裁切) */}
                       <div
                         onClick={toggleReplayUserVoice}
-                        className="relative w-full flex-1 my-2.5 rounded-2xl overflow-hidden bg-neutral-900 border border-white/10 flex flex-col justify-between cursor-pointer group"
+                        className="relative w-full flex-1 my-2.5 rounded-2xl overflow-hidden bg-black border border-white/10 flex flex-col justify-between cursor-pointer group"
                       >
                         {selectedScenario.videoPromptUrl && (
                           <video
@@ -2395,7 +2410,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                                 e.currentTarget.currentTime = imitationWindow.startSec;
                               }
                             }}
-                            className="absolute inset-0 w-full h-full object-cover opacity-75 group-hover:opacity-90 transition-opacity"
+                            className="absolute inset-0 w-full h-full object-contain opacity-85 group-hover:opacity-100 transition-opacity"
                           />
                         )}
                         <div className="relative z-10 p-2.5 flex items-center justify-between">

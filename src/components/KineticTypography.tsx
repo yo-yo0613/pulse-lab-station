@@ -205,12 +205,14 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
         const sY = clamp(snap.yOffset, -22, 22);
         const sX = clamp(snap.scaleX, 0.85, 2.1);
         const sSpace = clamp(snap.letterSpacing, -1, 12);
+        const extraHorizontalEm = Math.max(0, (sX * sScale - 1) * 0.48);
 
         el.style.display = 'inline-block';
         el.style.transformOrigin = 'center bottom';
         el.style.fontWeight = `${clamp(snap.weight, 500, 900)}`;
-        el.style.letterSpacing = `${sSpace.toFixed(1)}px`;
-        el.style.marginRight = `${Math.max(0, sSpace).toFixed(1)}px`;
+        el.style.letterSpacing = '0px';
+        el.style.marginLeft = `${extraHorizontalEm.toFixed(2)}em`;
+        el.style.marginRight = `calc(${extraHorizontalEm.toFixed(2)}em + ${Math.max(0, sSpace).toFixed(1)}px)`;
         el.style.transform = `translate3d(0, ${sY.toFixed(1)}px, 0) scaleX(${sX.toFixed(2)}) scale(${sScale.toFixed(2)})`;
 
         if (fillPct >= 99) {

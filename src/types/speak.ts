@@ -71,7 +71,8 @@ export interface PromptScenario {
   difficultyStars?: 1 | 2 | 3; // 難度星級 (1~3)
   imitateStartSec?: number;  // 模仿段於完整情境影片中的起始秒數
   imitateEndSec?: number;    // 模仿段於完整情境影片中的結束秒數
-  muteVideoUrl?: string;     // 選填：去掉人聲的模仿片段影片路徑
+  selectionVideoUrl?: string; // 選填：選片階段專用的精華預覽短片 (*-選片.mp4)
+  muteVideoUrl?: string;     // 選填：去掉人聲的模仿片段影片路徑 (*-模仿.mp4)
   themeColor: string;
   accentColor: string;
   durationSeconds: number;
