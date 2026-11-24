@@ -547,8 +547,14 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
               }}
               className={`kinetic-char inline-block font-black transform-gpu transition-[color,opacity] duration-75 ${
                 variant === 'card'
-                  ? 'text-base sm:text-lg md:text-xl'
+                  ? chars.length > 16
+                    ? 'text-sm sm:text-base'
+                    : 'text-base sm:text-lg md:text-xl'
                   : variant === 'preview'
+                  ? chars.length > 16
+                    ? 'text-lg sm:text-xl md:text-2xl'
+                    : 'text-2xl sm:text-3xl md:text-4xl'
+                  : chars.length > 16
                   ? 'text-2xl sm:text-3xl md:text-4xl'
                   : 'text-4xl sm:text-5xl md:text-6xl'
               } ${isMonochrome ? 'text-black' : 'text-white'}`}
