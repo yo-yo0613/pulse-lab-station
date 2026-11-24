@@ -73,6 +73,7 @@ export interface PromptScenario {
   imitateEndSec?: number;    // 模仿段於完整情境影片中的結束秒數
   selectionVideoUrl?: string; // 選填：選片階段專用的精華預覽短片 (*-選片.mp4)
   muteVideoUrl?: string;     // 選填：去掉人聲的模仿片段影片路徑 (*-模仿.mp4)
+  posterUrl?: string;        // 選填：首幀輕量縮圖路徑 (*_poster.jpg)，防黑畫面閃爍与減少多 video 搶頻寬
   themeColor: string;
   accentColor: string;
   durationSeconds: number;

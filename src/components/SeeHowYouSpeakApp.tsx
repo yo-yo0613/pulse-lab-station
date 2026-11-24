@@ -1523,24 +1523,17 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             transition={{ duration: 0.45 }}
             className="relative z-10 w-full h-full flex flex-col items-center justify-between pt-14 pb-6 px-4 sm:px-8"
           >
-            {/* 背景微透明預覽影片 (選擇階段使用 *-選片.mp4，保持極簡黑白調性) */}
-            {activeRailItem?.kind === 'scenario' &&
-              (activeRailItem.scenario.selectionVideoUrl || activeRailItem.scenario.videoPromptUrl) && (
-                <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-[0.08]">
-                  <video
-                    key={`bg-${activeRailItem.scenario.id}`}
-                    src={
-                      activeRailItem.scenario.selectionVideoUrl ||
-                      activeRailItem.scenario.videoPromptUrl
-                    }
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover grayscale blur-[2px] scale-105"
-                  />
-                </div>
-              )}
+            {/* 背景微透明預覽氛圍層 (改用輕量靜態縮圖，避免重複開啟 1080p video 搶頻寬) */}
+            {activeRailItem?.kind === 'scenario' && activeRailItem.scenario.posterUrl && (
+              <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden opacity-[0.09]">
+                <img
+                  key={`bg-${activeRailItem.scenario.id}`}
+                  src={activeRailItem.scenario.posterUrl}
+                  alt=""
+                  className="w-full h-full object-cover grayscale blur-[3px] scale-105"
+                />
+              </div>
+            )}
 
             {/* 頂部操作輔助列 */}
             <div className="relative z-20 w-full max-w-6xl flex items-center justify-between text-[11px] font-iosevka text-black/60">
@@ -1631,16 +1624,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                     {/* 側邊非焦點卡：改為「影片壓暗縮圖 + 台詞預覽」 (Canva 白板便利貼共識) */}
                     {!isCenter && (
                       <div className="relative w-full h-full flex flex-col justify-between p-6 bg-neutral-900 text-white overflow-hidden">
-                        {item.kind === 'scenario' &&
-                          (item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl) && (
-                            <video
-                              src={item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl}
-                              muted
-                              playsInline
-                              preload="metadata"
-                              className="absolute inset-0 w-full h-full object-cover opacity-35 grayscale brightness-75 pointer-events-none"
-                            />
-                          )}
+                        {item.kind === 'scenario' && item.scenario.posterUrl && (
+                          <img
+                            src={item.scenario.posterUrl}
+                            alt={item.scenario.title}
+                            loading="lazy"
+                            className="absolute inset-0 w-full h-full object-cover opacity-35 grayscale brightness-75 pointer-events-none"
+                          />
+                        )}
                         <div className="relative z-10 flex items-center justify-between text-[10px] font-iosevka text-white/65">
                           <span>
                             {item.kind === 'tag'
@@ -1714,6 +1705,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                                 key={item.scenario.id}
                                 ref={previewVideoRef}
                                 src={item.scenario.selectionVideoUrl || item.scenario.videoPromptUrl}
+                                poster={item.scenario.posterUrl}
+                                preload="auto"
                                 autoPlay
                                 loop
                                 playsInline
@@ -1961,6 +1954,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         ? selectedScenario.muteVideoUrl
                         : selectedScenario.videoPromptUrl
                     }
+                    poster={selectedScenario.posterUrl}
+                    preload="auto"
                     playsInline
                     onLoadedMetadata={(e) => {
                       const d = e.currentTarget.duration;
@@ -2401,6 +2396,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                           <video
                             ref={resultCardVideoRef}
                             src={selectedScenario.muteVideoUrl || selectedScenario.videoPromptUrl}
+                            poster={selectedScenario.posterUrl}
+                            preload="auto"
                             autoPlay
                             loop
                             muted
