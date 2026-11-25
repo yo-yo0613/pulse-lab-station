@@ -27,6 +27,7 @@ export interface UseAudioAnalyzerReturn {
   };
   startRecording: () => void;
   stopRecording: () => void;
+  captureSegmentWavUrl: () => string | null;
   unlockAudio: () => Promise<boolean>;
   muteInput: (mute: boolean) => void;
   setMuteInput: (muted: boolean) => void;
@@ -618,6 +619,23 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     }
   }, [revokeCurrentAudioUrl]);
 
+  // 擷取獨立接力音軌 WAV URL（供兩段接力配音分別儲存第 1 句 / 第 2 句，不互相覆蓋）
+  const captureSegmentWavUrl = useCallback((): string | null => {
+    if (!isRecordingRef.current) return null;
+    isRecordingRef.current = false;
+
+    const chunks = pcmChunksRef.current;
+    const sampleRate = recordingSampleRateRef.current || audioCtxRef.current?.sampleRate || 44100;
+    const wavBlob = encodeWavBlob(chunks, sampleRate);
+    pcmChunksRef.current = [];
+    pcmSamplesCountRef.current = 0;
+
+    if (wavBlob && wavBlob.size > 44) {
+      return URL.createObjectURL(wavBlob);
+    }
+    return null;
+  }, []);
+
   // 取得聲卡 DAC 硬體已消耗秒數
   const getElapsedHardwareTime = useCallback(() => {
     if (!audioCtxRef.current || !isRecordingRef.current) return 0;
@@ -953,6 +971,7 @@ export function useAudioAnalyzer(): UseAudioAnalyzerReturn {
     getValidRecordings,
     startRecording,
     stopRecording,
+    captureSegmentWavUrl,
     unlockAudio,
     muteInput,
     setMuteInput: muteInput,

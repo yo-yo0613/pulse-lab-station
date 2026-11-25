@@ -388,6 +388,22 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const [isPlayingUserVoice, setIsPlayingUserVoice] = useState<boolean>(false);
   const replayAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // 兩段接力配音獨立音軌 (例如《勞薯》0:01-0:06 + 0:09-0:14)
+  const relaySegUrlsRef = useRef<[string | null, string | null]>([null, null]);
+  const relayPlayedFlagsRef = useRef<[boolean, boolean]>([false, false]);
+  const relayPhaseRef = useRef<'seg1' | 'wait' | 'seg2'>('seg1');
+  const [relayPhase, setRelayPhase] = useState<'seg1' | 'wait' | 'seg2'>('seg1');
+
+  const cleanupRelayAudioUrls = useCallback(() => {
+    relaySegUrlsRef.current.forEach((u) => {
+      if (u) URL.revokeObjectURL(u);
+    });
+    relaySegUrlsRef.current = [null, null];
+    relayPlayedFlagsRef.current = [false, false];
+    relayPhaseRef.current = 'seg1';
+    setRelayPhase('seg1');
+  }, []);
+
   // 維護者抽屜與全模態狀態
   const [isMaintainerOpen, setIsMaintainerOpen] = useState(false);
   const [enableVoiceVad, setEnableVoiceVad] = useState(false);
@@ -403,6 +419,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     getValidRecordings,
     startRecording,
     stopRecording,
+    captureSegmentWavUrl,
     unlockAudio,
     setMuteInput,
     calibrateNoiseFloor,
@@ -477,10 +494,19 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     [coverflowRail]
   );
 
-  // 2. Slide 2 Coverflow 預覽影片同步 MATS 動態字幕
+  // 2. Slide 2 Coverflow 預覽影片同步 MATS 動態字幕 + 自動播放降級防呆
   useEffect(() => {
     if (speakState !== 'PROMPT_VIDEO' || activeRailItem?.kind !== 'scenario') {
       return;
+    }
+
+    const vidEl = previewVideoRef.current;
+    if (vidEl && vidEl.paused) {
+      vidEl.play().catch(() => {
+        setPreviewMuted(true);
+        vidEl.muted = true;
+        vidEl.play().catch(() => {});
+      });
     }
 
     const sc = activeRailItem.scenario;
@@ -553,6 +579,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       }
       clearStudioTimers();
       stopUserVoiceAudio();
+      cleanupRelayAudioUrls();
       setIsVideoPlayingUnmuted(false);
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
@@ -641,7 +668,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     stopUserVoiceAudio();
     await unlockAudio();
 
-    const freshSnaps = createInitialSnapshots(selectedScenario.line, false);
+    const freshSnaps = createInitialSnapshots(
+      selectedScenario.relaySegments?.[0]?.line ?? selectedScenario.line,
+      false
+    );
+    cleanupRelayAudioUrls();
     charSnapshotsRef.current = freshSnaps;
     setCharSnapshots(freshSnaps);
     setActiveKtvCharIdx(-1);
@@ -666,19 +697,68 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
 
         syncStudioVideoPlayback(imitationWindow.startSec, true, true);
 
+        const relaySegs = selectedScenario.relaySegments;
+        const isRelayMode = Boolean(relaySegs && relaySegs.length === 2);
         const totalImitateDur = imitationWindow.durationSec;
-        const timings = imitationWindow.charTimings;
-        const chars = Array.from(selectedScenario.line);
+        const recordWallStart = performance.now();
 
         const tickRecord = () => {
-          const elapsed = getElapsedHardwareTime();
+          const elapsed = isRelayMode
+            ? (performance.now() - recordWallStart) / 1000
+            : getElapsedHardwareTime();
           const curMediaTime = imitationWindow.startSec + elapsed;
           setElapsedRecordTime(Number(Math.min(totalImitateDur, elapsed).toFixed(1)));
           setStudioVideoTime(Math.min(imitationWindow.endSec, curMediaTime));
 
+          // 兩段接力模式狀態機：0:01-0:06 (seg1) -> 0:06-0:09 (wait 播原音暫停收音) -> 0:09-0:14 (seg2)
+          if (isRelayMode && relaySegs) {
+            const [seg1, seg2] = relaySegs;
+            if (relayPhaseRef.current === 'seg1' && curMediaTime >= seg1.endSec) {
+              relaySegUrlsRef.current[0] = captureSegmentWavUrl();
+              setMuteInput(true);
+              const vid = studioVideoRef.current;
+              if (vid) vid.muted = false;
+              relayPhaseRef.current = 'wait';
+              setRelayPhase('wait');
+            } else if (relayPhaseRef.current === 'wait' && curMediaTime >= seg2.startSec) {
+              const vid = studioVideoRef.current;
+              if (vid) vid.muted = true;
+              setMuteInput(false);
+              startRecording();
+              const seg2Snaps = createInitialSnapshots(seg2.line, false);
+              charSnapshotsRef.current = seg2Snaps;
+              setCharSnapshots(seg2Snaps);
+              setActiveKtvCharIdx(-1);
+              relayPhaseRef.current = 'seg2';
+              setRelayPhase('seg2');
+            }
+          }
+
+          const activeLine = isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].line
+              : relaySegs[1].line
+            : selectedScenario.line;
+          const chars = Array.from(activeLine);
+          const segStart = isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].startSec
+              : relaySegs[1].startSec
+            : imitationWindow.startSec;
+          const segEnd = isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].endSec
+              : relaySegs[1].endSec
+            : imitationWindow.endSec;
+          const segDur = Math.max(0.5, segEnd - segStart);
+          const timings = isRelayMode ? [] : imitationWindow.charTimings;
+
           // KTV 逐字填色進度 + Web Audio 即時聲學變形定格快照
           const live = audioMetricsRef.current;
-          const isVoice = live.isVoiceActive && live.smoothVolume > Math.max(8, noiseFloor * 0.75);
+          const isVoice =
+            (!isRelayMode || relayPhaseRef.current !== 'wait') &&
+            live.isVoiceActive &&
+            live.smoothVolume > Math.max(8, noiseFloor * 0.75);
           const liveScale = isVoice
             ? clampVal(0.92 + (live.smoothVolume / 100) * 0.62, 0.85, 1.52)
             : 1.0;
@@ -701,47 +781,50 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               : 0;
 
           let currentActiveIdx = -1;
-          const nextSnaps = charSnapshotsRef.current.map((prevSnap, idx) => {
-            const t = timings[idx];
-            const cStart = t ? t.startSec : imitationWindow.startSec + (idx / chars.length) * totalImitateDur;
-            const cEnd = t
-              ? t.endSec
-              : imitationWindow.startSec + ((idx + 1) / chars.length) * totalImitateDur;
-            const cDur = Math.max(0.12, cEnd - cStart);
+          if (!isRelayMode || relayPhaseRef.current !== 'wait') {
+            const nextSnaps = charSnapshotsRef.current.map((prevSnap, idx) => {
+              const t = timings[idx];
+              const cStart = t ? t.startSec : segStart + (idx / chars.length) * segDur;
+              const cEnd = t ? t.endSec : segStart + ((idx + 1) / chars.length) * segDur;
+              const cDur = Math.max(0.12, cEnd - cStart);
 
-            if (curMediaTime >= cEnd) {
-              return {
-                ...prevSnap,
-                fillProgress: 1,
-              };
-            }
-            if (curMediaTime >= cStart && curMediaTime < cEnd) {
-              currentActiveIdx = idx;
-              const fillProgress = clampVal((curMediaTime - cStart) / cDur, 0.05, 0.99);
-              // 保留該字發音期間的最大音量縮放與拉長特徴
-              const peakScale = isVoice ? Math.max(prevSnap.scale, liveScale) : prevSnap.scale;
-              const peakScaleX = isVoice ? Math.max(prevSnap.scaleX, liveScaleX) : prevSnap.scaleX;
-              const activeY = isVoice ? liveY : prevSnap.yOffset;
-              const isHighlight = peakScale >= 1.2 || peakScaleX >= 1.25;
-              return {
-                char: chars[idx],
-                scale: Number(peakScale.toFixed(2)),
-                yOffset: activeY,
-                scaleX: Number(peakScaleX.toFixed(2)),
-                letterSpacing: Math.max(prevSnap.letterSpacing, liveSpacing),
-                weight: isHighlight ? 900 : peakScale > 1.08 ? 700 : 600,
-                fillProgress,
-                isHighlight,
-              };
-            }
-            return prevSnap;
-          });
+              if (curMediaTime >= cEnd) {
+                return {
+                  ...prevSnap,
+                  fillProgress: 1,
+                };
+              }
+              if (curMediaTime >= cStart && curMediaTime < cEnd) {
+                currentActiveIdx = idx;
+                const fillProgress = clampVal((curMediaTime - cStart) / cDur, 0.05, 0.99);
+                const peakScale = isVoice ? Math.max(prevSnap.scale, liveScale) : prevSnap.scale;
+                const peakScaleX = isVoice ? Math.max(prevSnap.scaleX, liveScaleX) : prevSnap.scaleX;
+                const activeY = isVoice ? liveY : prevSnap.yOffset;
+                const isHighlight = peakScale >= 1.2 || peakScaleX >= 1.25;
+                return {
+                  char: chars[idx],
+                  scale: Number(peakScale.toFixed(2)),
+                  yOffset: activeY,
+                  scaleX: Number(peakScaleX.toFixed(2)),
+                  letterSpacing: Math.max(prevSnap.letterSpacing, liveSpacing),
+                  weight: isHighlight ? 900 : peakScale > 1.08 ? 700 : 600,
+                  fillProgress,
+                  isHighlight,
+                };
+              }
+              return prevSnap;
+            });
 
-          charSnapshotsRef.current = nextSnaps;
-          setCharSnapshots(nextSnaps);
-          setActiveKtvCharIdx(currentActiveIdx);
+            charSnapshotsRef.current = nextSnaps;
+            setCharSnapshots(nextSnaps);
+            setActiveKtvCharIdx(currentActiveIdx);
+          }
 
           if (elapsed >= totalImitateDur) {
+            if (isRelayMode) {
+              relaySegUrlsRef.current[1] = captureSegmentWavUrl();
+              setMuteInput(true);
+            }
             stopStudioRecordingToReviewRef.current();
           } else {
             animFrameIdRef.current = requestAnimationFrame(tickRecord);
@@ -754,15 +837,56 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   }, [
     clearStudioTimers,
     stopUserVoiceAudio,
+    cleanupRelayAudioUrls,
     unlockAudio,
     selectedScenario,
     imitationWindow,
     setMuteInput,
     startRecording,
+    captureSegmentWavUrl,
     getElapsedHardwareTime,
     noiseFloor,
     syncStudioVideoPlayback,
   ]);
+
+  // 依據影片時間軸觸發接力音軌或恢復原片音軌（0:01-0:06 seg1 -> 0:06-0:09 原音 -> 0:09-0:14 seg2）
+  const syncRelayPlaybackAtTime = useCallback(
+    (vid: HTMLVideoElement, t: number) => {
+      const relaySegs = selectedScenario.relaySegments;
+      if (!relaySegs || relaySegs.length !== 2) return false;
+      const [seg1, seg2] = relaySegs;
+      const [url1, url2] = relaySegUrlsRef.current;
+
+      if (t >= seg1.startSec && t < seg1.endSec) {
+        vid.muted = true;
+        if (!relayPlayedFlagsRef.current[0] && url1) {
+          relayPlayedFlagsRef.current[0] = true;
+          if (replayAudioRef.current) replayAudioRef.current.pause();
+          const a = new Audio(url1);
+          replayAudioRef.current = a;
+          a.onplay = () => setIsPlayingUserVoice(true);
+          a.onended = () => setIsPlayingUserVoice(false);
+          a.play().catch(() => {});
+        }
+      } else if (t >= seg1.endSec && t < seg2.startSec) {
+        // 中間對方回話區間 (0:06-0:09)：切換回原片音軌
+        vid.muted = false;
+      } else if (t >= seg2.startSec && t <= seg2.endSec + 0.3) {
+        vid.muted = true;
+        if (!relayPlayedFlagsRef.current[1] && url2) {
+          relayPlayedFlagsRef.current[1] = true;
+          if (replayAudioRef.current) replayAudioRef.current.pause();
+          const a = new Audio(url2);
+          replayAudioRef.current = a;
+          a.onplay = () => setIsPlayingUserVoice(true);
+          a.onended = () => setIsPlayingUserVoice(false);
+          a.play().catch(() => {});
+        }
+      }
+      return true;
+    },
+    [selectedScenario.relaySegments]
+  );
 
   // Step 3「3 看效果」：自動將壓暗去人聲影片定位至模仿段並與玩家 WAV 原音同步播放
   const playReviewDubbing = useCallback(() => {
@@ -771,8 +895,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       replayAudioRef.current.currentTime = 0;
       replayAudioRef.current = null;
     }
+    relayPlayedFlagsRef.current = [false, false];
     syncStudioVideoPlayback(imitationWindow.startSec, true, true);
-    if (userAudioUrl) {
+    if (!selectedScenario.relaySegments && userAudioUrl) {
       const audio = new Audio(userAudioUrl);
       replayAudioRef.current = audio;
       audio.onplay = () => setIsPlayingUserVoice(true);
@@ -780,7 +905,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       audio.onerror = () => setIsPlayingUserVoice(false);
       audio.play().catch(() => setIsPlayingUserVoice(false));
     }
-  }, [imitationWindow.startSec, userAudioUrl, syncStudioVideoPlayback]);
+  }, [imitationWindow.startSec, selectedScenario.relaySegments, userAudioUrl, syncStudioVideoPlayback]);
 
   // 當進入 Step 3「3 看效果」且 userAudioUrl 就緒時，自動播放一次玩家的配音成片效果
   useEffect(() => {
@@ -1027,10 +1152,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     }
   }, [speakState]);
 
-  // 原音回放控制 (與結算頁左側 9:16 小卡影片同步重播)
+  // 原音回放控制 (與結算頁左側 9:16 小卡影片同步重播；接力模式支援依影片時間軸分軌播放)
   const toggleReplayUserVoice = useCallback(() => {
     resetResultCountdown();
-    if (!userAudioUrl) return;
+    const isRelay = Boolean(selectedScenario.relaySegments?.length === 2);
+    if (!isRelay && !userAudioUrl) return;
     if (isPlayingUserVoice && replayAudioRef.current) {
       replayAudioRef.current.pause();
       replayAudioRef.current.currentTime = 0;
@@ -1040,10 +1166,16 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     if (replayAudioRef.current) {
       replayAudioRef.current.pause();
     }
+    relayPlayedFlagsRef.current = [false, false];
     if (resultCardVideoRef.current) {
       resultCardVideoRef.current.currentTime = imitationWindow.startSec;
       resultCardVideoRef.current.play().catch(() => {});
     }
+    if (isRelay) {
+      setIsPlayingUserVoice(true);
+      return;
+    }
+    if (!userAudioUrl) return;
     const audio = new Audio(userAudioUrl);
     replayAudioRef.current = audio;
     audio.onended = () => setIsPlayingUserVoice(false);
@@ -1056,7 +1188,13 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       console.warn('[See How You Speak] Audio play() rejected:', err);
       setIsPlayingUserVoice(false);
     });
-  }, [userAudioUrl, isPlayingUserVoice, imitationWindow.startSec, resetResultCountdown]);
+  }, [
+    userAudioUrl,
+    isPlayingUserVoice,
+    imitationWindow.startSec,
+    resetResultCountdown,
+    selectedScenario.relaySegments,
+  ]);
 
   // 當結算頁展開雙欄 9:16 動態配音小卡 (resultSubStage === 1) 時，自動播放一次玩家的配音與影片
   useEffect(() => {
@@ -1745,6 +1883,16 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                                 playsInline
                                 muted={previewMuted}
                                 className="w-full h-full object-contain"
+                                onCanPlay={(e) => {
+                                  const v = e.currentTarget;
+                                  if (v.paused) {
+                                    v.play().catch(() => {
+                                      setPreviewMuted(true);
+                                      v.muted = true;
+                                      v.play().catch(() => {});
+                                    });
+                                  }
+                                }}
                                 onPlay={() => setIsVideoPlayingUnmuted(!previewMuted)}
                                 onPause={() => setIsVideoPlayingUnmuted(false)}
                               />
@@ -2025,10 +2173,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                       if (studioStep === 'RECORD') return;
                       const t = e.currentTarget.currentTime;
                       setStudioVideoTime(t);
-                      // 在 Step 3「看效果」時，限制影片在模仿段區間內循環
-                      if (studioStep === 'REVIEW' && t >= imitationWindow.endSec) {
-                        e.currentTarget.currentTime = imitationWindow.startSec;
-                        e.currentTarget.play().catch(() => {});
+                      // 在 Step 3「看效果」時，限制影片在模仿段區間內循環，並依時間軸觸發接力音軌
+                      if (studioStep === 'REVIEW') {
+                        syncRelayPlaybackAtTime(e.currentTarget, t);
+                        if (t >= imitationWindow.endSec) {
+                          relayPlayedFlagsRef.current = [false, false];
+                          e.currentTarget.currentTime = imitationWindow.startSec;
+                          e.currentTarget.play().catch(() => {});
+                        }
                       }
                     }}
                     onEnded={(e) => {
@@ -2142,10 +2294,24 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         {selectedScenario.line}
                       </p>
                     </div>
+                  ) : studioStep === 'RECORD' &&
+                    selectedScenario.relaySegments &&
+                    relayPhase === 'wait' ? (
+                    <div className="w-full flex flex-col items-center py-2">
+                      <span className="px-3.5 py-1 rounded-full bg-white/15 border border-white/25 text-white/90 font-mats-tc text-sm font-bold animate-pulse">
+                        對方說話中（00:06–00:09）· 準備接下一句！
+                      </span>
+                    </div>
                   ) : (
                     <div className="w-full flex items-center justify-center">
                       <KineticTypography
-                        text={selectedScenario.line}
+                        text={
+                          studioStep === 'RECORD' && selectedScenario.relaySegments
+                            ? relayPhase === 'seg1'
+                              ? selectedScenario.relaySegments[0].line
+                              : selectedScenario.relaySegments[1].line
+                            : selectedScenario.line
+                        }
                         audioMetrics={audioMetrics}
                         noiseFloor={noiseFloor}
                         variant="preview"
@@ -2483,7 +2649,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                             muted
                             playsInline
                             onTimeUpdate={(e) => {
-                              if (e.currentTarget.currentTime >= imitationWindow.endSec) {
+                              const t = e.currentTarget.currentTime;
+                              if (isPlayingUserVoice) {
+                                syncRelayPlaybackAtTime(e.currentTarget, t);
+                              }
+                              if (t >= imitationWindow.endSec) {
+                                relayPlayedFlagsRef.current = [false, false];
                                 e.currentTarget.currentTime = imitationWindow.startSec;
                               }
                             }}
