@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { OmniActionType, OmniInputSource, OmniActionMessage } from '../types/omniInput';
 import type { AudioMetrics, SpeakState } from '../types/speak';
+import { getRemoteRoomId, subscribeRemoteCommands } from '../utils/remoteRelay';
 
 export const OMNI_BUS_CHANNEL_NAME = 'see-how-you-speak-bus';
 
@@ -24,6 +25,8 @@ export function useOmniInput({
   const [lastActionSource, setLastActionSource] = useState<OmniInputSource | null>(null);
   const [lastActionTime, setLastActionTime] = useState<number>(0);
   const [watchdogRemaining, setWatchdogRemaining] = useState<number | null>(null);
+  const [remoteConnected, setRemoteConnected] = useState<boolean>(false);
+  const remoteRoomId = getRemoteRoomId();
 
   // 1. 狀態遷移互斥鎖 (Transition Mutex with 350ms Debounce - A/B 31)
   const lastTransitionTimeRef = useRef<number>(0);
@@ -203,10 +206,11 @@ export function useOmniInput({
     };
   }, [currentState, dispatchAction, lastActionTime, watchdogPaused]);
 
-  // 本地 Peer / Web 廣播匯流排 (A/B 30)
+  // 本地 Peer + 跨裝置雲端遙控匯流排 (BroadcastChannel + ntfy WSS)
   useEffect(() => {
+    let bc: BroadcastChannel | null = null;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      const bc = new BroadcastChannel(OMNI_BUS_CHANNEL_NAME);
+      bc = new BroadcastChannel(OMNI_BUS_CHANNEL_NAME);
       broadcastChannelRef.current = bc;
 
       bc.onmessage = (event: MessageEvent<OmniActionMessage>) => {
@@ -215,12 +219,23 @@ export function useOmniInput({
           dispatchAction(msg.type, msg.source || 'remote_web', msg.payload);
         }
       };
-
-      return () => {
-        bc.close();
-      };
     }
-  }, [dispatchAction]);
+
+    const unsubscribeRelay = subscribeRemoteCommands(
+      remoteRoomId,
+      (msg) => {
+        if (msg && msg.type) {
+          dispatchAction(msg.type, msg.source || 'remote_web', msg.payload);
+        }
+      },
+      setRemoteConnected
+    );
+
+    return () => {
+      if (bc) bc.close();
+      unsubscribeRelay();
+    };
+  }, [dispatchAction, remoteRoomId]);
 
   // 螢幕防休眠 Wake Lock 與虛擬活性心跳 (Defense 7.26)
   useEffect(() => {
@@ -270,5 +285,7 @@ export function useOmniInput({
     dispatchAction,
     lastActionSource,
     watchdogRemaining,
+    remoteConnected,
+    remoteRoomId,
   };
 }

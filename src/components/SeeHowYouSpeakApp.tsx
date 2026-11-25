@@ -20,6 +20,7 @@ import { SpeakExportModal, buildSpeakShareUrl } from './SpeakExportModal';
 import { MaintainerDrawer } from './MaintainerDrawer';
 import { compareVoiceDTW } from '../utils/audioDTW';
 import { handleMaintainerTap } from '../utils/kioskLock';
+import { buildMobileRemoteUrl, getRemoteRoomId } from '../utils/remoteRelay';
 import {
   Mic,
   Volume2,
@@ -356,8 +357,15 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   );
 
   const studioVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pendingSeekTimeRef = useRef<number | null>(null);
+  const pendingAutoPlayRef = useRef<boolean>(false);
+  const pendingMutedRef = useRef<boolean | null>(null);
+  const [studioVideoPaused, setStudioVideoPaused] = useState<boolean>(false);
   const timelineBarRef = useRef<HTMLDivElement | null>(null);
   const isDraggingTimelineRef = useRef<boolean>(false);
+  const [showRemoteQrModal, setShowRemoteQrModal] = useState<boolean>(false);
+  const remoteRoomId = useMemo(() => getRemoteRoomId(), []);
+  const remoteControlUrl = useMemo(() => buildMobileRemoteUrl(remoteRoomId), [remoteRoomId]);
 
   // ============================================================================
   // Page 4: 結算頁 (% 波浪湧升 -> 左欄 9:16 動態配音小卡 + 右欄 4 維度 & QR + 右上 30s SVG 倒數環)
@@ -594,6 +602,39 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     stopStudioRecordingToReviewRef.current = stopStudioRecordingToReview;
   }, [stopStudioRecordingToReview]);
 
+  // 安全控制錄音室影片 seek + play（若 src 剛切換尚未 readyState >= 2，交由 onCanPlay 接手）
+  const syncStudioVideoPlayback = useCallback(
+    (seekTime: number | null, shouldPlay: boolean, muted: boolean) => {
+      const vid = studioVideoRef.current;
+      pendingSeekTimeRef.current = seekTime;
+      pendingAutoPlayRef.current = shouldPlay;
+      pendingMutedRef.current = muted;
+      if (!vid) return;
+
+      vid.muted = muted;
+      if (vid.readyState >= 2) {
+        if (seekTime !== null) {
+          vid.currentTime = seekTime;
+          pendingSeekTimeRef.current = null;
+        }
+        if (shouldPlay) {
+          pendingAutoPlayRef.current = false;
+          vid.play().catch(() => {
+            if (!vid.muted) {
+              vid.muted = true;
+              vid.play().catch(() => setStudioVideoPaused(true));
+            } else {
+              setStudioVideoPaused(true);
+            }
+          });
+        } else {
+          vid.pause();
+        }
+      }
+    },
+    []
+  );
+
   // 從 Step 1「看情境」或 Step 3「重錄」按下【開始模仿 / 重錄】：強制對齊模仿段起點 -> 3-2-1 倒數 -> Step 2 錄音
   const startImitationCountdown = useCallback(async () => {
     clearStudioTimers();
@@ -608,13 +649,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     setIsActivelyRecording(false);
 
     // 隱性問題 01 防線：進入 3-2-1 倒數瞬間，強制將影片 seek 對齊至模仿段起點 imitateStartSec 並暫停待命
-    const vid = studioVideoRef.current;
-    if (vid) {
-      vid.pause();
-      vid.muted = true;
-      vid.currentTime = imitationWindow.startSec;
-      setStudioVideoTime(imitationWindow.startSec);
-    }
+    syncStudioVideoPlayback(imitationWindow.startSec, false, true);
+    setStudioVideoTime(imitationWindow.startSec);
 
     setCountdownNum(3);
     setStudioStep('COUNTDOWN');
@@ -628,12 +664,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         setIsActivelyRecording(true);
         setStudioStep('RECORD');
 
-        const v = studioVideoRef.current;
-        if (v) {
-          v.muted = true;
-          v.currentTime = imitationWindow.startSec;
-          v.play().catch(() => {});
-        }
+        syncStudioVideoPlayback(imitationWindow.startSec, true, true);
 
         const totalImitateDur = imitationWindow.durationSec;
         const timings = imitationWindow.charTimings;
@@ -730,6 +761,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     startRecording,
     getElapsedHardwareTime,
     noiseFloor,
+    syncStudioVideoPlayback,
   ]);
 
   // Step 3「3 看效果」：自動將壓暗去人聲影片定位至模仿段並與玩家 WAV 原音同步播放
@@ -739,12 +771,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       replayAudioRef.current.currentTime = 0;
       replayAudioRef.current = null;
     }
-    const vid = studioVideoRef.current;
-    if (vid) {
-      vid.muted = true;
-      vid.currentTime = imitationWindow.startSec;
-      vid.play().catch(() => {});
-    }
+    syncStudioVideoPlayback(imitationWindow.startSec, true, true);
     if (userAudioUrl) {
       const audio = new Audio(userAudioUrl);
       replayAudioRef.current = audio;
@@ -753,7 +780,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       audio.onerror = () => setIsPlayingUserVoice(false);
       audio.play().catch(() => setIsPlayingUserVoice(false));
     }
-  }, [imitationWindow.startSec, userAudioUrl]);
+  }, [imitationWindow.startSec, userAudioUrl, syncStudioVideoPlayback]);
 
   // 當進入 Step 3「3 看效果」且 userAudioUrl 就緒時，自動播放一次玩家的配音成片效果
   useEffect(() => {
@@ -771,19 +798,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   // Step 1「看情境」與 Step 3「看效果」的影片時間軸同步與區間循環控制
   useEffect(() => {
     if (speakState !== 'RECORDING') return;
-    const vid = studioVideoRef.current;
-    if (!vid) return;
 
     if (studioStep === 'WATCH') {
-      vid.muted = false;
-      vid.currentTime = 0;
-      vid.play().catch(() => {
-        // 若瀏覽器阻擋有聲自動播放，靜音啟動
-        vid.muted = true;
-        vid.play().catch(() => {});
-      });
+      syncStudioVideoPlayback(0, true, false);
     }
-  }, [speakState, studioStep, selectedScenario.id]);
+  }, [speakState, studioStep, selectedScenario.id, syncStudioVideoPlayback]);
 
   // 離開 RECORDING 時清理計時器與音訊
   useEffect(() => {
@@ -1145,7 +1164,11 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         return;
       }
       if (action === 'START_RECORDING') {
-        enterRecordingStage();
+        if (speakState === 'RECORDING' && (studioStep === 'WATCH' || studioStep === 'REVIEW')) {
+          startImitationCountdown();
+        } else {
+          enterRecordingStage();
+        }
         return;
       }
       if (action === 'PREV_STEP') {
@@ -1393,15 +1416,25 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             {/* 首頁循環 BGM (離開首頁即自動停止) */}
             <audio ref={bgmAudioRef} src="/audio/bgm_landing.mp3" loop preload="auto" />
 
-            {/* 右上角 / 左上角極簡 BGM 靜音切換 */}
-            <button
-              onClick={() => setBgmMuted((m) => !m)}
-              className="fixed top-4 left-4 z-30 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white border border-black/15 shadow-sm flex items-center gap-1.5 text-[11px] font-iosevka text-black/75 cursor-pointer transition-all"
-              title={bgmMuted ? '開啟首頁背景音樂' : '靜音首頁背景音樂'}
-            >
-              {bgmMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-              <span>{bgmMuted ? 'BGM OFF' : 'BGM ON'}</span>
-            </button>
+            {/* 右上角 / 左上角極簡 BGM 靜音切換 + 手機遙控 QR 入口 */}
+            <div className="fixed top-4 left-4 z-30 flex items-center gap-2">
+              <button
+                onClick={() => setBgmMuted((m) => !m)}
+                className="px-3 py-1.5 rounded-full bg-white/80 hover:bg-white border border-black/15 shadow-sm flex items-center gap-1.5 text-[11px] font-iosevka text-black/75 cursor-pointer transition-all"
+                title={bgmMuted ? '開啟首頁背景音樂' : '靜音首頁背景音樂'}
+              >
+                {bgmMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                <span>{bgmMuted ? 'BGM OFF' : 'BGM ON'}</span>
+              </button>
+              <button
+                onClick={() => setShowRemoteQrModal(true)}
+                className="px-3 py-1.5 rounded-full bg-white/80 hover:bg-white border border-black/15 shadow-sm flex items-center gap-1.5 text-[11px] font-iosevka text-black/75 cursor-pointer transition-all"
+                title="打開手機純遠端遙控 QR Code"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>手機遙控 QR</span>
+              </button>
+            </div>
 
             {/* 中央主標題與水面鏡像倒影：每個單字隨麥克風音量變大、隨音高上下跳動、隨延音拉長 */}
             <div className="relative flex flex-col items-center justify-center select-none pointer-events-none">
@@ -1963,6 +1996,31 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         setStudioVideoDuration(d);
                       }
                     }}
+                    onCanPlay={(e) => {
+                      const vid = e.currentTarget;
+                      if (pendingMutedRef.current !== null) {
+                        vid.muted = pendingMutedRef.current;
+                      }
+                      if (pendingSeekTimeRef.current !== null) {
+                        vid.currentTime = pendingSeekTimeRef.current;
+                        pendingSeekTimeRef.current = null;
+                      }
+                      if (pendingAutoPlayRef.current) {
+                        pendingAutoPlayRef.current = false;
+                        vid.play().catch(() => {
+                          if (!vid.muted) {
+                            vid.muted = true;
+                            vid.play().catch(() => setStudioVideoPaused(true));
+                          } else {
+                            setStudioVideoPaused(true);
+                          }
+                        });
+                      }
+                    }}
+                    onPlay={() => setStudioVideoPaused(false)}
+                    onPause={() => {
+                      if (studioStep === 'WATCH') setStudioVideoPaused(true);
+                    }}
                     onTimeUpdate={(e) => {
                       if (studioStep === 'RECORD') return;
                       const t = e.currentTarget.currentTime;
@@ -1990,6 +2048,28 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         : 'brightness-95'
                     }`}
                   />
+                )}
+
+                {/* 瀏覽器阻擋自動播放時的點擊播放備援 */}
+                {studioStep === 'WATCH' && studioVideoPaused && (
+                  <button
+                    onClick={() => {
+                      const vid = studioVideoRef.current;
+                      if (vid) {
+                        vid.muted = false;
+                        vid.play().catch(() => {
+                          vid.muted = true;
+                          vid.play().catch(() => {});
+                        });
+                      }
+                    }}
+                    className="absolute inset-0 z-20 flex items-center justify-center bg-black/45 hover:bg-black/35 text-white cursor-pointer transition-all"
+                  >
+                    <span className="px-5 py-2.5 rounded-full bg-white text-black font-mats-tc text-sm font-bold flex items-center gap-2 shadow-lg">
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>點擊播放情境影片</span>
+                    </span>
+                  </button>
                 )}
 
                 {/* 左上角狀態膠囊：Step 2 顯示 REC 00:03 / 00:05；Step 3 顯示 🔊 你的聲音 */}
@@ -2568,6 +2648,44 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             onRestart={handleRestart}
             onPlayStateChange={setIsPlayingUserVoice}
           />
+        </div>
+      )}
+
+      {/* 手機純遠端遙控 QR Code 彈窗 */}
+      {showRemoteQrModal && (
+        <div
+          onClick={() => setShowRemoteQrModal(false)}
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl bg-white text-black p-6 shadow-2xl border border-black/15 flex flex-col items-center text-center gap-3"
+          >
+            <span className="font-iosevka text-[10px] tracking-[0.22em] text-black/50 uppercase">
+              MOBILE REMOTE // ROOM: {remoteRoomId}
+            </span>
+            <h3 className="font-mats-tc text-lg font-black">手機掃碼純遠端遙控電視</h3>
+            <div className="p-3 rounded-2xl bg-white border border-black/10">
+              <QRCodeCanvas value={remoteControlUrl} size={180} />
+            </div>
+            <p className="font-mats-tc text-xs text-black/65 leading-relaxed">
+              用手機掃描後即可直接遠端按 START、左右選片、開始模仿與確定，電視端完全免滑鼠免觸屏。
+            </p>
+            <a
+              href={remoteControlUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-iosevka text-[10px] text-black/50 underline break-all"
+            >
+              {remoteControlUrl}
+            </a>
+            <button
+              onClick={() => setShowRemoteQrModal(false)}
+              className="mt-1 px-5 py-2 rounded-full bg-black text-white font-mats-tc text-xs font-bold cursor-pointer"
+            >
+              關閉
+            </button>
+          </div>
         </div>
       )}
 
