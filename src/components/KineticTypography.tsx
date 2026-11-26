@@ -201,19 +201,29 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
         if (!snap) return;
 
         const fillPct = clamp(Math.round(snap.fillProgress * 100), 0, 100);
-        const sScale = clamp(snap.scale, 0.78, 1.55);
-        const sY = clamp(snap.yOffset, -22, 22);
-        const sX = clamp(snap.scaleX, 0.85, 2.1);
-        const sSpace = clamp(snap.letterSpacing, -1, 12);
-        const extraHorizontalEm = Math.max(0, (sX * sScale - 1) * 0.48);
+        // 依據該行字數動態限制 maxScale，避免長句在小卡內左右超出或撞行，且僅用 GPU transform 不觸發 Layout Reflow
+        const dynamicMaxScale = count > 18 ? 1.26 : count > 11 ? 1.42 : 1.72;
+        const rawScale = snap.scale;
+        // 強化「活潑/大聲放大 vs 冷靜/小聲縮小」視覺對比
+        const contrastScale =
+          rawScale >= 1.15
+            ? clamp(1.08 + (rawScale - 1.15) * 1.45, 1.08, dynamicMaxScale)
+            : rawScale <= 0.94
+            ? clamp(0.72 + (rawScale - 0.78) * 1.1, 0.72, 0.92)
+            : rawScale;
+        const maxY = count > 11 ? 8 : 16;
+        const sY = clamp(snap.yOffset, -maxY, maxY);
+        const sX = clamp(snap.scaleX, 0.88, count > 14 ? 1.45 : 1.85);
+        // 僅對低語/冷靜字做微調字距，動態縮放全交給 GPU transform
+        const calmWeight = rawScale <= 0.94 ? 300 : clamp(snap.weight, 500, 900);
 
         el.style.display = 'inline-block';
-        el.style.transformOrigin = 'center bottom';
-        el.style.fontWeight = `${clamp(snap.weight, 500, 900)}`;
-        el.style.letterSpacing = '0px';
-        el.style.marginLeft = `${extraHorizontalEm.toFixed(2)}em`;
-        el.style.marginRight = `calc(${extraHorizontalEm.toFixed(2)}em + ${Math.max(0, sSpace).toFixed(1)}px)`;
-        el.style.transform = `translate3d(0, ${sY.toFixed(1)}px, 0) scaleX(${sX.toFixed(2)}) scale(${sScale.toFixed(2)})`;
+        el.style.transformOrigin = 'center center';
+        el.style.fontWeight = `${calmWeight}`;
+        el.style.letterSpacing = rawScale <= 0.94 ? '2px' : '0px';
+        el.style.marginLeft = '0px';
+        el.style.marginRight = '0px';
+        el.style.transform = `translate3d(0, ${sY.toFixed(1)}px, 0) scaleX(${sX.toFixed(2)}) scale(${contrastScale.toFixed(2)})`;
 
         if (fillPct >= 99) {
           // 已完成填色或回放中已定格的字：高能量或拉長字使用重點色突顯
@@ -527,10 +537,10 @@ export const KineticTypography: React.FC<KineticTypographyProps> = ({
         ref={containerRef}
         className={`relative w-full mx-auto flex flex-wrap items-center justify-center select-none transform-gpu will-change-transform ${
           variant === 'card'
-            ? 'max-w-xs gap-x-0 gap-y-1 p-1 sm:p-2'
+            ? 'max-w-xs gap-x-1 gap-y-3 leading-[1.7] p-1.5 sm:p-2.5'
             : variant === 'preview'
-            ? 'max-w-2xl gap-x-0.5 gap-y-2 p-2 sm:p-3'
-            : 'max-w-4xl gap-x-1 gap-y-4 p-6'
+            ? 'max-w-2xl gap-x-1.5 gap-y-3.5 leading-[1.65] p-2 sm:p-3'
+            : 'max-w-4xl gap-x-2 gap-y-5 leading-[1.6] p-6'
         }`}
         style={{
           fontFamily:

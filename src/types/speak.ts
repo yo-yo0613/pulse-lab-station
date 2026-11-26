@@ -76,6 +76,14 @@ export interface PromptScenario {
     endSec: number;
     line: string;
   }>;
+  scriptCues?: Array<{       // 選填：全片對齊角色說話的時間軸字幕 (含前導對白與目標配音)
+    startSec: number;
+    endSec: number;
+    text: string;
+    speaker?: 'left' | 'right' | 'center';
+    isTarget?: boolean;
+  }>;
+  isFreeTheater?: boolean;   // 選填：30 秒情緒起承轉合自由劇場模式 (不依賴原片)
   selectionVideoUrl?: string; // 選填：選片階段專用的精華預覽短片 (*-選片.mp4)
   muteVideoUrl?: string;     // 選填：去掉人聲的模仿片段影片路徑 (*-模仿.mp4)
   posterUrl?: string;        // 選填：首幀輕量縮圖路徑 (*_poster.jpg)，防黑畫面閃爍与減少多 video 搶頻寬

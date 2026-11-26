@@ -72,15 +72,15 @@ export function compareVoiceDTW(
   refVolumeCurve: number[],
   refPitchCurve: number[]
 ): DTWComparisonResult {
-  // 0. 空陣列與極短錄音前置防禦 (5.5 防護：< 15 影格約小於 250ms，杜絕矩陣越界)
+  // 0. 空陣列與極短錄音前置防禦 (未偵測到有效人聲一律給 0%，杜絕假保底分)
   if (!userVolume || userVolume.length < 15) {
     return {
-      overallScore: 50,
-      volumeScore: 50,
-      pitchScore: 50,
+      overallScore: 0,
+      volumeScore: 0,
+      pitchScore: 0,
       rank: 'A',
-      rankTitle: '再試一次 (TRY AGAIN)',
-      comment: '錄音時間過短或未收錄到足夠聲音，請跟隨節奏大聲模仿！',
+      rankTitle: '靜音潛行者',
+      comment: '未偵測到有效人聲，請靠近麥克風大聲模仿並再試一次！',
       alignedPathLength: 0,
     };
   }

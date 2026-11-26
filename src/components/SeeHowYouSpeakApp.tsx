@@ -30,7 +30,6 @@ import {
   Radio,
   ArrowRight,
   ChevronLeft,
-  ChevronRight,
   Eye,
   X,
   CheckCircle2,
@@ -387,6 +386,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   // 原音回放狀態
   const [isPlayingUserVoice, setIsPlayingUserVoice] = useState<boolean>(false);
   const replayAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [hasDetectedSpeech, setHasDetectedSpeech] = useState<boolean>(true);
+  const activeVocalFramesRef = useRef<number>(0);
+  const [isPreRoll, setIsPreRoll] = useState<boolean>(false);
+  const isPreRollRef = useRef<boolean>(false);
+  const preRollWallStartRef = useRef<number>(0);
+  const [preRollVideoTime, setPreRollVideoTime] = useState<number>(0);
 
   // 兩段接力配音獨立音軌 (例如《勞薯》0:01-0:06 + 0:09-0:14)
   const relaySegUrlsRef = useRef<[string | null, string | null]>([null, null]);
@@ -604,7 +609,12 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
   const stopStudioRecordingToReview = useCallback(() => {
     clearStudioTimers();
     stopRecording();
+    isPreRollRef.current = false;
+    setIsPreRoll(false);
     setIsActivelyRecording(false);
+
+    const detected = activeVocalFramesRef.current >= 27; // 約 0.45 秒以上有效人聲
+    setHasDetectedSpeech(detected);
 
     const { volume, pitch } = getValidRecordings();
     const { volTrimmed, pitchTrimmed } = trimSilenceMargins(volume, pitch, noiseFloor);
@@ -662,7 +672,8 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     []
   );
 
-  // 從 Step 1「看情境」或 Step 3「重錄」按下【開始模仿 / 重錄】：強制對齊模仿段起點 -> 3-2-1 倒數 -> Step 2 錄音
+  // 從 Step 1「看情境」或 Step 3「重錄」按下【開始模仿 / 重錄】：
+  // 若為前導鋪陳型影片 (imitateStartSec > 2.5 且非自由劇場)，先從 00:00 播原音鋪陳並預熱麥克風，抵達配音點瞬間開閘零延遲收音！
   const startImitationCountdown = useCallback(async () => {
     clearStudioTimers();
     stopUserVoiceAudio();
@@ -673,13 +684,204 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       false
     );
     cleanupRelayAudioUrls();
+    activeVocalFramesRef.current = 0;
+    setHasDetectedSpeech(true);
     charSnapshotsRef.current = freshSnaps;
     setCharSnapshots(freshSnaps);
     setActiveKtvCharIdx(-1);
     setElapsedRecordTime(0);
     setIsActivelyRecording(false);
 
-    // 隱性問題 01 防線：進入 3-2-1 倒數瞬間，強制將影片 seek 對齊至模仿段起點 imitateStartSec 並暫停待命
+    const relaySegs = selectedScenario.relaySegments;
+    const isRelayMode = Boolean(relaySegs && relaySegs.length === 2);
+    const totalImitateDur = imitationWindow.durationSec;
+    const useFullPreRoll = !selectedScenario.isFreeTheater && imitationWindow.startSec > 2.5;
+
+    const beginActiveGateLoop = (wallStartMs: number) => {
+      const tickRecord = () => {
+        const elapsed = isRelayMode || selectedScenario.isFreeTheater
+          ? (performance.now() - wallStartMs) / 1000
+          : getElapsedHardwareTime();
+        const curMediaTime = imitationWindow.startSec + elapsed;
+        setElapsedRecordTime(Number(Math.min(totalImitateDur, elapsed).toFixed(1)));
+        setStudioVideoTime(Math.min(imitationWindow.endSec, curMediaTime));
+
+        // 兩段接力模式狀態機：0:01-0:06 (seg1) -> 0:06-0:09 (wait 播原音暫停收音) -> 0:09-0:14 (seg2)
+        if (isRelayMode && relaySegs) {
+          const [seg1, seg2] = relaySegs;
+          if (relayPhaseRef.current === 'seg1' && curMediaTime >= seg1.endSec) {
+            relaySegUrlsRef.current[0] = captureSegmentWavUrl();
+            setMuteInput(true);
+            const vid = studioVideoRef.current;
+            if (vid) vid.muted = false;
+            relayPhaseRef.current = 'wait';
+            setRelayPhase('wait');
+          } else if (relayPhaseRef.current === 'wait' && curMediaTime >= seg2.startSec) {
+            const vid = studioVideoRef.current;
+            if (vid) vid.muted = true;
+            setMuteInput(false);
+            startRecording();
+            const seg2Snaps = createInitialSnapshots(seg2.line, false);
+            charSnapshotsRef.current = seg2Snaps;
+            setCharSnapshots(seg2Snaps);
+            setActiveKtvCharIdx(-1);
+            relayPhaseRef.current = 'seg2';
+            setRelayPhase('seg2');
+          }
+        }
+
+        const activeLine =
+          isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].line
+              : relaySegs[1].line
+            : selectedScenario.line;
+        const chars = Array.from(activeLine);
+        const segStart =
+          isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].startSec
+              : relaySegs[1].startSec
+            : imitationWindow.startSec;
+        const segEnd =
+          isRelayMode && relaySegs
+            ? relayPhaseRef.current === 'seg1'
+              ? relaySegs[0].endSec
+              : relaySegs[1].endSec
+            : imitationWindow.endSec;
+        const segDur = Math.max(0.5, segEnd - segStart);
+        const timings = isRelayMode ? [] : imitationWindow.charTimings;
+
+        // KTV 逐字填色進度 + Web Audio 即時聲學變形定格快照
+        const live = audioMetricsRef.current;
+        const isVoice =
+          (!isRelayMode || relayPhaseRef.current !== 'wait') &&
+          live.isVoiceActive &&
+          live.smoothVolume > Math.max(8, noiseFloor * 0.75);
+        if (
+          (!isRelayMode || relayPhaseRef.current !== 'wait') &&
+          live.isVoiceActive &&
+          live.smoothVolume > Math.max(16, noiseFloor * 1.35)
+        ) {
+          activeVocalFramesRef.current += 1;
+        }
+        const liveScale = isVoice
+          ? clampVal(0.92 + (live.smoothVolume / 100) * 0.62, 0.85, 1.52)
+          : 1.0;
+        const liveY = isVoice
+          ? Math.round(
+              clampVal(
+                live.deltaF0 !== undefined ? -live.deltaF0 * 28 : live.pitchYOffset * 0.72,
+                -20,
+                20
+              )
+            )
+          : 0;
+        const liveScaleX =
+          isVoice && live.sustainedDuration > 0.25
+            ? clampVal(1.0 + (live.sustainedDuration - 0.25) * 1.15, 1.0, 1.9)
+            : 1.0;
+        const liveSpacing =
+          (live.pauseDurationMs ?? 0) >= 240
+            ? clampVal(((live.pauseDurationMs ?? 0) / 110) * 1.8, 0, 10)
+            : 0;
+
+        let currentActiveIdx = -1;
+        if (!isRelayMode || relayPhaseRef.current !== 'wait') {
+          const nextSnaps = charSnapshotsRef.current.map((prevSnap, idx) => {
+            const t = timings[idx];
+            const cStart = t ? t.startSec : segStart + (idx / chars.length) * segDur;
+            const cEnd = t ? t.endSec : segStart + ((idx + 1) / chars.length) * segDur;
+            const cDur = Math.max(0.12, cEnd - cStart);
+
+            if (curMediaTime >= cEnd) {
+              return {
+                ...prevSnap,
+                fillProgress: 1,
+              };
+            }
+            if (curMediaTime >= cStart && curMediaTime < cEnd) {
+              currentActiveIdx = idx;
+              const fillProgress = clampVal((curMediaTime - cStart) / cDur, 0.05, 0.99);
+              const peakScale = isVoice ? Math.max(prevSnap.scale, liveScale) : prevSnap.scale;
+              const peakScaleX = isVoice ? Math.max(prevSnap.scaleX, liveScaleX) : prevSnap.scaleX;
+              const activeY = isVoice ? liveY : prevSnap.yOffset;
+              const isHighlight = peakScale >= 1.2 || peakScaleX >= 1.25;
+              return {
+                char: chars[idx],
+                scale: Number(peakScale.toFixed(2)),
+                yOffset: activeY,
+                scaleX: Number(peakScaleX.toFixed(2)),
+                letterSpacing: Math.max(prevSnap.letterSpacing, liveSpacing),
+                weight: isHighlight ? 900 : peakScale > 1.08 ? 700 : 600,
+                fillProgress,
+                isHighlight,
+              };
+            }
+            return prevSnap;
+          });
+
+          charSnapshotsRef.current = nextSnaps;
+          setCharSnapshots(nextSnaps);
+          setActiveKtvCharIdx(currentActiveIdx);
+        }
+
+        if (elapsed >= totalImitateDur) {
+          if (isRelayMode) {
+            relaySegUrlsRef.current[1] = captureSegmentWavUrl();
+            setMuteInput(true);
+          }
+          stopStudioRecordingToReviewRef.current();
+        } else {
+          animFrameIdRef.current = requestAnimationFrame(tickRecord);
+        }
+      };
+
+      animFrameIdRef.current = requestAnimationFrame(tickRecord);
+    };
+
+    if (useFullPreRoll) {
+      // 預熱麥克風管線 (setMuteInput(false) 僅丟棄前導幀)，同時影片從 00:00 播原音鋪陳
+      setMuteInput(false);
+      isPreRollRef.current = true;
+      setIsPreRoll(true);
+      setStudioStep('RECORD');
+      preRollWallStartRef.current = performance.now();
+      setPreRollVideoTime(0);
+      syncStudioVideoPlayback(0, true, false);
+
+      const tickPreRoll = () => {
+        if (!isPreRollRef.current) return;
+        const vid = studioVideoRef.current;
+        const t = vid && vid.readyState >= 2 ? vid.currentTime : (performance.now() - preRollWallStartRef.current) / 1000;
+        setPreRollVideoTime(t);
+        setStudioVideoTime(t);
+
+        const remaining = imitationWindow.startSec - t;
+        if (remaining <= 2.25 && remaining > 0) {
+          const cd = remaining > 1.5 ? 3 : remaining > 0.75 ? 2 : 1;
+          setCountdownNum(cd as 3 | 2 | 1);
+        }
+
+        if (t >= imitationWindow.startSec) {
+          isPreRollRef.current = false;
+          setIsPreRoll(false);
+          if (vid) {
+            vid.muted = true;
+          }
+          startRecording();
+          setIsActivelyRecording(true);
+          beginActiveGateLoop(performance.now());
+          return;
+        }
+        animFrameIdRef.current = requestAnimationFrame(tickPreRoll);
+      };
+
+      animFrameIdRef.current = requestAnimationFrame(tickPreRoll);
+      return;
+    }
+
+    // 自由劇場或無長前導片段（如《勞薯》）：標準 3-2-1 倒數後直接錄音
     syncStudioVideoPlayback(imitationWindow.startSec, false, true);
     setStudioVideoTime(imitationWindow.startSec);
 
@@ -696,142 +898,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
         setStudioStep('RECORD');
 
         syncStudioVideoPlayback(imitationWindow.startSec, true, true);
-
-        const relaySegs = selectedScenario.relaySegments;
-        const isRelayMode = Boolean(relaySegs && relaySegs.length === 2);
-        const totalImitateDur = imitationWindow.durationSec;
-        const recordWallStart = performance.now();
-
-        const tickRecord = () => {
-          const elapsed = isRelayMode
-            ? (performance.now() - recordWallStart) / 1000
-            : getElapsedHardwareTime();
-          const curMediaTime = imitationWindow.startSec + elapsed;
-          setElapsedRecordTime(Number(Math.min(totalImitateDur, elapsed).toFixed(1)));
-          setStudioVideoTime(Math.min(imitationWindow.endSec, curMediaTime));
-
-          // 兩段接力模式狀態機：0:01-0:06 (seg1) -> 0:06-0:09 (wait 播原音暫停收音) -> 0:09-0:14 (seg2)
-          if (isRelayMode && relaySegs) {
-            const [seg1, seg2] = relaySegs;
-            if (relayPhaseRef.current === 'seg1' && curMediaTime >= seg1.endSec) {
-              relaySegUrlsRef.current[0] = captureSegmentWavUrl();
-              setMuteInput(true);
-              const vid = studioVideoRef.current;
-              if (vid) vid.muted = false;
-              relayPhaseRef.current = 'wait';
-              setRelayPhase('wait');
-            } else if (relayPhaseRef.current === 'wait' && curMediaTime >= seg2.startSec) {
-              const vid = studioVideoRef.current;
-              if (vid) vid.muted = true;
-              setMuteInput(false);
-              startRecording();
-              const seg2Snaps = createInitialSnapshots(seg2.line, false);
-              charSnapshotsRef.current = seg2Snaps;
-              setCharSnapshots(seg2Snaps);
-              setActiveKtvCharIdx(-1);
-              relayPhaseRef.current = 'seg2';
-              setRelayPhase('seg2');
-            }
-          }
-
-          const activeLine = isRelayMode && relaySegs
-            ? relayPhaseRef.current === 'seg1'
-              ? relaySegs[0].line
-              : relaySegs[1].line
-            : selectedScenario.line;
-          const chars = Array.from(activeLine);
-          const segStart = isRelayMode && relaySegs
-            ? relayPhaseRef.current === 'seg1'
-              ? relaySegs[0].startSec
-              : relaySegs[1].startSec
-            : imitationWindow.startSec;
-          const segEnd = isRelayMode && relaySegs
-            ? relayPhaseRef.current === 'seg1'
-              ? relaySegs[0].endSec
-              : relaySegs[1].endSec
-            : imitationWindow.endSec;
-          const segDur = Math.max(0.5, segEnd - segStart);
-          const timings = isRelayMode ? [] : imitationWindow.charTimings;
-
-          // KTV 逐字填色進度 + Web Audio 即時聲學變形定格快照
-          const live = audioMetricsRef.current;
-          const isVoice =
-            (!isRelayMode || relayPhaseRef.current !== 'wait') &&
-            live.isVoiceActive &&
-            live.smoothVolume > Math.max(8, noiseFloor * 0.75);
-          const liveScale = isVoice
-            ? clampVal(0.92 + (live.smoothVolume / 100) * 0.62, 0.85, 1.52)
-            : 1.0;
-          const liveY = isVoice
-            ? Math.round(
-                clampVal(
-                  live.deltaF0 !== undefined ? -live.deltaF0 * 28 : live.pitchYOffset * 0.72,
-                  -20,
-                  20
-                )
-              )
-            : 0;
-          const liveScaleX =
-            isVoice && live.sustainedDuration > 0.25
-              ? clampVal(1.0 + (live.sustainedDuration - 0.25) * 1.15, 1.0, 1.9)
-              : 1.0;
-          const liveSpacing =
-            (live.pauseDurationMs ?? 0) >= 240
-              ? clampVal(((live.pauseDurationMs ?? 0) / 110) * 1.8, 0, 10)
-              : 0;
-
-          let currentActiveIdx = -1;
-          if (!isRelayMode || relayPhaseRef.current !== 'wait') {
-            const nextSnaps = charSnapshotsRef.current.map((prevSnap, idx) => {
-              const t = timings[idx];
-              const cStart = t ? t.startSec : segStart + (idx / chars.length) * segDur;
-              const cEnd = t ? t.endSec : segStart + ((idx + 1) / chars.length) * segDur;
-              const cDur = Math.max(0.12, cEnd - cStart);
-
-              if (curMediaTime >= cEnd) {
-                return {
-                  ...prevSnap,
-                  fillProgress: 1,
-                };
-              }
-              if (curMediaTime >= cStart && curMediaTime < cEnd) {
-                currentActiveIdx = idx;
-                const fillProgress = clampVal((curMediaTime - cStart) / cDur, 0.05, 0.99);
-                const peakScale = isVoice ? Math.max(prevSnap.scale, liveScale) : prevSnap.scale;
-                const peakScaleX = isVoice ? Math.max(prevSnap.scaleX, liveScaleX) : prevSnap.scaleX;
-                const activeY = isVoice ? liveY : prevSnap.yOffset;
-                const isHighlight = peakScale >= 1.2 || peakScaleX >= 1.25;
-                return {
-                  char: chars[idx],
-                  scale: Number(peakScale.toFixed(2)),
-                  yOffset: activeY,
-                  scaleX: Number(peakScaleX.toFixed(2)),
-                  letterSpacing: Math.max(prevSnap.letterSpacing, liveSpacing),
-                  weight: isHighlight ? 900 : peakScale > 1.08 ? 700 : 600,
-                  fillProgress,
-                  isHighlight,
-                };
-              }
-              return prevSnap;
-            });
-
-            charSnapshotsRef.current = nextSnaps;
-            setCharSnapshots(nextSnaps);
-            setActiveKtvCharIdx(currentActiveIdx);
-          }
-
-          if (elapsed >= totalImitateDur) {
-            if (isRelayMode) {
-              relaySegUrlsRef.current[1] = captureSegmentWavUrl();
-              setMuteInput(true);
-            }
-            stopStudioRecordingToReviewRef.current();
-          } else {
-            animFrameIdRef.current = requestAnimationFrame(tickRecord);
-          }
-        };
-
-        animFrameIdRef.current = requestAnimationFrame(tickRecord);
+        beginActiveGateLoop(performance.now());
       }, 2250)
     );
   }, [
@@ -865,7 +932,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
           const a = new Audio(url1);
           replayAudioRef.current = a;
           a.onplay = () => setIsPlayingUserVoice(true);
-          a.onended = () => setIsPlayingUserVoice(false);
+          // 注意：第 1 段結束時保持 isPlayingUserVoice=true，讓影片繼續走到 0:09 觸發第 2 段！
           a.play().catch(() => {});
         }
       } else if (t >= seg1.endSec && t < seg2.startSec) {
@@ -888,7 +955,9 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     [selectedScenario.relaySegments]
   );
 
-  // Step 3「3 看效果」：自動將壓暗去人聲影片定位至模仿段並與玩家 WAV 原音同步播放
+  // Step 3「3 看效果」：從配音前 1 秒切入循環回放，免乾等前導劇情
+  const reviewStartSec = Math.max(0, imitationWindow.startSec - 1.0);
+
   const playReviewDubbing = useCallback(() => {
     if (replayAudioRef.current) {
       replayAudioRef.current.pause();
@@ -896,8 +965,10 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       replayAudioRef.current = null;
     }
     relayPlayedFlagsRef.current = [false, false];
-    syncStudioVideoPlayback(imitationWindow.startSec, true, true);
-    if (!selectedScenario.relaySegments && userAudioUrl) {
+    syncStudioVideoPlayback(reviewStartSec, true, false);
+    if (selectedScenario.relaySegments) {
+      setIsPlayingUserVoice(true);
+    } else if (userAudioUrl) {
       const audio = new Audio(userAudioUrl);
       replayAudioRef.current = audio;
       audio.onplay = () => setIsPlayingUserVoice(true);
@@ -905,7 +976,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
       audio.onerror = () => setIsPlayingUserVoice(false);
       audio.play().catch(() => setIsPlayingUserVoice(false));
     }
-  }, [imitationWindow.startSec, selectedScenario.relaySegments, userAudioUrl, syncStudioVideoPlayback]);
+  }, [reviewStartSec, selectedScenario.relaySegments, userAudioUrl, syncStudioVideoPlayback]);
 
   // 當進入 Step 3「3 看效果」且 userAudioUrl 就緒時，自動播放一次玩家的配音成片效果
   useEffect(() => {
@@ -954,14 +1025,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     });
 
     const dtwResult =
-      volTrimmed.length < 15
+      !hasDetectedSpeech || volTrimmed.length < 15
         ? {
-            overallScore: 68,
-            volumeScore: 66,
-            pitchScore: 70,
+            overallScore: 0,
+            volumeScore: 0,
+            pitchScore: 0,
             rank: 'A' as const,
-            rankTitle: '微聲探索者 (WHISPER SEED)',
-            comment: '音量起伏自然，建議更靠近麥克風放大重音張力！',
+            rankTitle: '靜音潛行者',
+            comment: '未偵測到有效人聲，建議回到上一頁點「重錄」大聲模仿！',
           }
         : compareVoiceDTW(
             volTrimmed,
@@ -970,13 +1041,19 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
             selectedScenario.referencePitchCurve
           );
 
-    const { sustainScore, rateScore, personaTitle, coachingComment } = derivePersonaAndFourScores(
+    const derived = derivePersonaAndFourScores(
       dtwResult.overallScore,
       dtwResult.volumeScore,
       dtwResult.pitchScore,
       volTrimmed,
       selectedScenario
     );
+    const sustainScore = !hasDetectedSpeech ? 0 : derived.sustainScore;
+    const rateScore = !hasDetectedSpeech ? 0 : derived.rateScore;
+    const personaTitle = !hasDetectedSpeech ? '靜音潛行者' : derived.personaTitle;
+    const coachingComment = !hasDetectedSpeech
+      ? '未偵測到有效人聲，建議重新錄製並靠近麥克風開口模仿！'
+      : derived.coachingComment;
 
     const finalRes: ScoreResult = {
       overallScore: dtwResult.overallScore,
@@ -1006,6 +1083,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     userRecordedVolume,
     userRecordedPitch,
     selectedScenario,
+    hasDetectedSpeech,
   ]);
 
   // 進度條點擊或拖曳 (PDF Page 1: 可以拖曳進度條重聽)
@@ -1430,9 +1508,6 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
     100 - imitateLeftPct
   );
   const playheadPct = clampVal((studioVideoTime / safeTotalDur) * 100, 0, 100);
-  const isInsideImitateSegment =
-    studioVideoTime >= imitationWindow.startSec - 0.15 &&
-    studioVideoTime <= imitationWindow.endSec + 0.25;
 
   // SVG 倒數進度環參數 (r = 11, circumference ≈ 69.1)
   const ringCircumference = 2 * Math.PI * 11;
@@ -1659,6 +1734,31 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                   對麥克風說聲「哈囉」，上面的標題會跟著你的聲音變大、跳動、拉長
                 </span>
               </button>
+
+              {/* 首頁顯眼個人校準大按鈕 (走評回饋 F6) */}
+              <button
+                onClick={async () => {
+                  await unlockAudio().catch(() => {});
+                  calibratePersonalBaseline();
+                }}
+                disabled={isCalibratingBaseline}
+                className={`mt-3 pointer-events-auto px-5 py-2 rounded-full border shadow-sm flex items-center gap-2 text-xs font-mats-tc font-bold cursor-pointer transition-all ${
+                  isCalibratingBaseline
+                    ? 'bg-black text-white border-black animate-pulse'
+                    : baselineProfile.isCalibrated
+                    ? 'bg-emerald-50 border-emerald-500/40 text-emerald-800 hover:bg-emerald-100'
+                    : 'bg-white/95 border-black/25 text-black hover:bg-black hover:text-white'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>
+                  {isCalibratingBaseline
+                    ? '正在採樣你的自然說話聲 (2 秒)...'
+                    : baselineProfile.isCalibrated
+                    ? `個人嗓音已校準 (${baselineProfile.f0Base}Hz) · 點擊重新校準`
+                    : '🎯 點此 2 秒校準個人嗓音基準 (推薦先校準)'}
+                </span>
+              </button>
             </div>
 
             {/* 底部發光白暈圓膠囊 START. 按鈕 */}
@@ -1717,24 +1817,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
               <span className="hidden sm:inline tracking-[0.18em] uppercase">
                 選一段你想模仿的台詞 · SCROLL OR CLICK ({railIndex + 1}/{coverflowRail.length})
               </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => moveRailTo(railIndex - 1)}
-                  disabled={railIndex === 0}
-                  className="p-1.5 rounded-full bg-white/75 border border-black/15 disabled:opacity-30 cursor-pointer hover:bg-white"
-                  aria-label="上一張卡片"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => moveRailTo(railIndex + 1)}
-                  disabled={railIndex === coverflowRail.length - 1}
-                  className="p-1.5 rounded-full bg-white/75 border border-black/15 disabled:opacity-30 cursor-pointer hover:bg-white"
-                  aria-label="下一張卡片"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+              <span className="w-16" aria-hidden="true" />
             </div>
 
             {/* 中央 3D 層疊 Coverflow 視窗 (側邊非焦點卡改為「影片壓暗縮圖」) */}
@@ -2124,14 +2207,29 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                     : 'border border-black/20'
                 }`}
               >
-                {/* 情境影片層：錄音中自動壓暗且原音靜音 */}
-                {selectedScenario.videoPromptUrl && (
+                {/* 自由劇場 30 秒舞台 (不綁原片畫面，依 scriptCues 呈現起承轉合情境提示) */}
+                {selectedScenario.isFreeTheater && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-neutral-900 via-black to-neutral-950">
+                    <span className="px-3 py-1 rounded-full bg-white/10 border border-white/20 font-iosevka text-[10px] tracking-[0.22em] text-white/70 mb-3">
+                      30s EMOTION THEATER // 起承轉合聲音演技
+                    </span>
+                    <p className="font-mats-tc text-base sm:text-xl font-bold text-[#F5A623]">
+                      {selectedScenario.scriptCues?.find(
+                        (c) => studioVideoTime >= c.startSec && studioVideoTime < c.endSec
+                      )?.text || selectedScenario.scriptCues?.[0]?.text}
+                    </p>
+                  </div>
+                )}
+
+                {/* 情境影片層：前導階段播原音，進配音區間自動壓暗且原音靜音 */}
+                {!selectedScenario.isFreeTheater && selectedScenario.videoPromptUrl && (
                   <video
                     key={selectedScenario.id}
                     ref={studioVideoRef}
                     src={
-                      (studioStep === 'RECORD' || studioStep === 'REVIEW') &&
-                      selectedScenario.muteVideoUrl
+                      studioStep === 'RECORD' && !isPreRoll && selectedScenario.muteVideoUrl
+                        ? selectedScenario.muteVideoUrl
+                        : studioStep === 'REVIEW' && selectedScenario.muteVideoUrl
                         ? selectedScenario.muteVideoUrl
                         : selectedScenario.videoPromptUrl
                     }
@@ -2178,7 +2276,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         syncRelayPlaybackAtTime(e.currentTarget, t);
                         if (t >= imitationWindow.endSec) {
                           relayPlayedFlagsRef.current = [false, false];
-                          e.currentTarget.currentTime = imitationWindow.startSec;
+                          e.currentTarget.currentTime = reviewStartSec;
                           e.currentTarget.play().catch(() => {});
                         }
                       }
@@ -2188,7 +2286,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                         e.currentTarget.currentTime = 0;
                         e.currentTarget.play().catch(() => {});
                       } else if (studioStep === 'REVIEW') {
-                        e.currentTarget.currentTime = imitationWindow.startSec;
+                        e.currentTarget.currentTime = reviewStartSec;
                         e.currentTarget.play().catch(() => {});
                       }
                     }}
@@ -2224,8 +2322,30 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                   </button>
                 )}
 
-                {/* 左上角狀態膠囊：Step 2 顯示 REC 00:03 / 00:05；Step 3 顯示 🔊 你的聲音 */}
-                {studioStep === 'RECORD' && (
+                {/* 左上角狀態膠囊：前導鋪陳顯示倒數與略過按鈕；正式錄音顯示 REC；看效果顯示 🔊 你的聲音 */}
+                {studioStep === 'RECORD' && isPreRoll && (
+                  <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-2">
+                    <div className="px-3.5 py-1.5 rounded-full bg-black/85 border border-[#F5A623]/50 text-[#F5A623] font-iosevka text-xs font-bold flex items-center gap-2 backdrop-blur-md">
+                      <span>
+                        前導劇情中 · {Math.max(0, Math.ceil(imitationWindow.startSec - preRollVideoTime))}s 後換你配音
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const vid = studioVideoRef.current;
+                        const jumpTo = Math.max(0, imitationWindow.startSec - 2.25);
+                        if (vid && vid.readyState >= 2) {
+                          vid.currentTime = jumpTo;
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-full bg-white/90 hover:bg-white text-black font-mats-tc text-xs font-bold shadow cursor-pointer transition-all"
+                    >
+                      略過前導 →
+                    </button>
+                  </div>
+                )}
+
+                {studioStep === 'RECORD' && !isPreRoll && (
                   <div className="absolute top-4 left-4 z-20 px-3.5 py-1.5 rounded-full bg-black/85 border border-white/25 text-white font-iosevka text-xs font-bold flex items-center gap-2 backdrop-blur-md">
                     <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
                     <span>
@@ -2274,26 +2394,57 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                   )}
                 </AnimatePresence>
 
+                {/* 前導倒數最後 2.25 秒浮現 3-2-1 提示（不遮擋影片，準備開閘收音） */}
+                {studioStep === 'RECORD' &&
+                  isPreRoll &&
+                  imitationWindow.startSec - preRollVideoTime <= 2.25 &&
+                  imitationWindow.startSec - preRollVideoTime > 0 && (
+                    <div className="absolute inset-0 z-30 pointer-events-none flex flex-col items-center justify-center bg-black/35">
+                      <span className="font-iosevka text-7xl sm:text-8xl font-bold text-[#F5A623] drop-shadow-lg">
+                        {countdownNum}
+                      </span>
+                      <span className="mt-1 font-mats-tc text-xs sm:text-sm text-white font-bold">
+                        準備開口配音！
+                      </span>
+                    </div>
+                  )}
+
                 {/* 影片底部字幕舞台：
-                    - Step 1 (WATCH): 非模仿段顯示標準字幕，進入模仿段顯示動態示範字幕
-                    - Step 2 (RECORD): KTV 逐字填色 + 即時隨玩家音量/音高/延音變形定格
+                    - Step 1 (WATCH) 或前導階段 (isPreRoll): 依角色說話時間軸顯示對白，不提早掛出目標台詞
+                    - Step 2 (RECORD !isPreRoll): KTV 逐字填色 + 即時隨玩家音量/音高/延音變形定格
                     - Step 3 (REVIEW): 呈現玩家剛錄好的定格聲學動態字幕造型 */}
                 <div className="absolute bottom-0 left-0 right-0 z-20 pt-10 pb-4 px-4 bg-gradient-to-t from-black/90 via-black/55 to-transparent flex flex-col items-center justify-end">
-                  {studioStep === 'WATCH' ? (
-                    <div className="w-full flex flex-col items-center">
-                      {isInsideImitateSegment ? (
-                        <span className="mb-1 px-2.5 py-0.5 rounded-full bg-[#F5A623]/25 border border-[#F5A623]/60 text-[#F5A623] font-iosevka text-[10px]">
-                          ★ 目標模仿段落
-                        </span>
-                      ) : null}
-                      <p
-                        className={`font-mats-tc font-bold text-xl sm:text-3xl tracking-wide text-center transition-colors ${
-                          isInsideImitateSegment ? 'text-[#F5A623]' : 'text-white/90'
-                        }`}
-                      >
-                        {selectedScenario.line}
-                      </p>
-                    </div>
+                  {studioStep === 'WATCH' || (studioStep === 'RECORD' && isPreRoll) ? (
+                    (() => {
+                      const activeCue = selectedScenario.scriptCues?.find(
+                        (c) => studioVideoTime >= c.startSec && studioVideoTime < c.endSec
+                      );
+                      if (!activeCue) return null;
+                      return (
+                        <div
+                          className={`w-full flex flex-col ${
+                            activeCue.speaker === 'left'
+                              ? 'items-start text-left pl-2'
+                              : activeCue.speaker === 'right'
+                              ? 'items-end text-right pr-2'
+                              : 'items-center text-center'
+                          }`}
+                        >
+                          {activeCue.isTarget && (
+                            <span className="mb-1 px-2.5 py-0.5 rounded-full bg-[#F5A623]/25 border border-[#F5A623]/60 text-[#F5A623] font-iosevka text-[10px]">
+                              ★ 目標模仿段落
+                            </span>
+                          )}
+                          <p
+                            className={`font-mats-tc font-bold text-lg sm:text-2xl tracking-wide transition-colors ${
+                              activeCue.isTarget ? 'text-[#F5A623]' : 'text-white/90'
+                            }`}
+                          >
+                            {activeCue.text}
+                          </p>
+                        </div>
+                      );
+                    })()
                   ) : studioStep === 'RECORD' &&
                     selectedScenario.relaySegments &&
                     relayPhase === 'wait' ? (
@@ -2463,9 +2614,14 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                 </>
               )}
 
-              {/* Step 3: 看效果 (含四維度怎麼看圖例 + 重錄 / 再看一次 / 確定，看結果 →) */}
+              {/* Step 3: 看效果 (含四維度怎麼看圖例 + 無人聲重錄提醒 + 重錄 / 再看一次 / 確定，看結果 →) */}
               {studioStep === 'REVIEW' && (
                 <>
+                  {!hasDetectedSpeech && (
+                    <div className="px-4 py-1.5 rounded-full bg-amber-100 border border-amber-500/50 text-amber-900 font-mats-tc text-xs font-bold flex items-center gap-2">
+                      <span>⚠️ 未偵測到有效人聲，建議點擊「重錄」再試一次（仍點確定將計為 0%）</span>
+                    </div>
+                  )}
                   {/* PDF Page 3：怎麼看四維度直覺圖例 (隱性問題 03 防線) */}
                   <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 text-[11px] font-mats-tc">
                     <span className="text-black/55 font-bold mr-1">怎麼看：</span>
@@ -2655,7 +2811,7 @@ export const SeeHowYouSpeakApp: React.FC<SeeHowYouSpeakAppProps> = ({ onSwitchMo
                               }
                               if (t >= imitationWindow.endSec) {
                                 relayPlayedFlagsRef.current = [false, false];
-                                e.currentTarget.currentTime = imitationWindow.startSec;
+                                e.currentTarget.currentTime = reviewStartSec;
                               }
                             }}
                             className="absolute inset-0 w-full h-full object-contain opacity-85 group-hover:opacity-100 transition-opacity"
